@@ -29,19 +29,29 @@ function parseNum(str) {
  */
 export async function fetchStockPool(topN = 100) {
   // 並行請求「昨日成交資料」與「公司資本額」
-  const [dayAllRes, companiesRes] = await Promise.allSettled([
-    axios.get(`${OPENAPI}/exchangeReport/STOCK_DAY_ALL`, { timeout: 15000 }),
-    axios.get(`${OPENAPI}/company/companies`, { timeout: 15000 }),
-  ])
+  // 生產環境透過 proxyGet 繞過 CORS，開發環境走 Vite dev proxy
+  const fetchDayAll = import.meta.env.DEV
+    ? axios.get(`${OPENAPI}/exchangeReport/STOCK_DAY_ALL`, { timeout: 15000 })
+    : proxyGet(`${_OPENAPI}/exchangeReport/STOCK_DAY_ALL`)
+
+  const fetchCompanies = import.meta.env.DEV
+    ? axios.get(`${OPENAPI}/company/companies`, { timeout: 15000 })
+    : proxyGet(`${_OPENAPI}/company/companies`)
+
+  const [dayAllRes, companiesRes] = await Promise.allSettled([fetchDayAll, fetchCompanies])
 
   if (dayAllRes.status === 'rejected') {
     throw new Error('無法取得 TWSE STOCK_DAY_ALL：' + dayAllRes.reason?.message)
   }
 
+  // proxyGet 直接回傳資料；axios.get 回傳 { data: ... }
+  const dayAllData = dayAllRes.value?.data ?? dayAllRes.value
+
   // 建立資本額對照表 { '2330': 25930380 }（張數）
   const sharesMap = {}
   if (companiesRes.status === 'fulfilled') {
-    for (const c of (companiesRes.value.data || [])) {
+    const companiesData = companiesRes.value?.data ?? companiesRes.value
+    for (const c of (companiesData || [])) {
       const code    = c.Code || c.CompanyCode
       const capital = parseNum(c.PaidInCapital || c.Capital || '0')
       if (code && capital > 0) {
@@ -51,7 +61,7 @@ export async function fetchStockPool(topN = 100) {
     }
   }
 
-  const allStocks = (dayAllRes.value.data || [])
+  const allStocks = (dayAllData || [])
     .filter(s => {
       if (!s.Code || !s.Name) return false
       if (!/^\d{4}$/.test(s.Code)) return false      // 只留 4 位數代碼
