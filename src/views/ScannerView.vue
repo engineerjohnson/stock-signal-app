@@ -20,7 +20,7 @@
       class="flex items-center gap-2 px-4 py-2 bg-slate-700/50 border-b border-slate-600 text-xs text-slate-300"
     >
       <span>🌙</span>
-      <span>收盤，顯示昨日資料（共 {{ store.allPoolStocks.length }} 檔，依昨日量排序）</span>
+      <span>收盤，顯示最後交易資料（共 {{ store.allPoolStocks.length }} 檔，依連量連次排序）</span>
     </div>
 
     <!-- ── Tab：強勢 / 弱勢 / 全部（僅盤中顯示） ─────────────── -->

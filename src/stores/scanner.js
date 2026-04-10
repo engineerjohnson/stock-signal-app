@@ -4,6 +4,16 @@ import { fetchStockPool, fetchBatchQuotes, lookupStockBase } from '@/services/tw
 import { calcConsecutiveTicks, calcConsecutiveVolume, isStrong, isWeak } from '@/utils/indicators.js'
 import { isMarketOpen } from '@/composables/useMarketHours.js'
 
+const QUOTES_STORAGE_KEY = 'scanner_quotes_v1'
+
+function saveQuotes(quotesObj) {
+  try { localStorage.setItem(QUOTES_STORAGE_KEY, JSON.stringify(quotesObj)) } catch {}
+}
+
+function loadQuotes() {
+  try { return JSON.parse(localStorage.getItem(QUOTES_STORAGE_KEY) || 'null') } catch { return null }
+}
+
 /** 將陣列切成每份 size 個的 chunks */
 function chunk(arr, size) {
   const out = []
@@ -45,18 +55,25 @@ export const useScannerStore = defineStore('scanner', () => {
     }
 
     return filtered.sort((a, b) => {
-      const sa = Math.abs(a.consecutiveTicks) + Math.abs(a.consecutiveVolume)
-      const sb = Math.abs(b.consecutiveTicks) + Math.abs(b.consecutiveVolume)
-      if (sb !== sa) return sb - sa
+      const va = Math.abs(a.consecutiveVolume), vb = Math.abs(b.consecutiveVolume)
+      if (vb !== va) return vb - va
+      const ta = Math.abs(a.consecutiveTicks),  tb = Math.abs(b.consecutiveTicks)
+      if (tb !== ta) return tb - ta
       return Math.abs(b.changePercent) - Math.abs(a.changePercent)
     })
   })
 
-  // ── Computed：收盤模式——全部股票依昨日量排序 ─────────────────
+  // ── Computed：收盤模式——依連量 → 連次 → 昨日量 排序 ──────────
   const allPoolStocks = computed(() =>
     Object.values(quotes.value)
       .filter(s => s.yesterdayVolume > 0)
-      .sort((a, b) => b.yesterdayVolume - a.yesterdayVolume)
+      .sort((a, b) => {
+        const va = Math.abs(a.consecutiveVolume), vb = Math.abs(b.consecutiveVolume)
+        if (vb !== va) return vb - va
+        const ta = Math.abs(a.consecutiveTicks),  tb = Math.abs(b.consecutiveTicks)
+        if (tb !== ta) return tb - ta
+        return b.yesterdayVolume - a.yesterdayVolume
+      })
   )
 
   // ── 初始化 ────────────────────────────────────────────────────
@@ -74,6 +91,17 @@ export const useScannerStore = defineStore('scanner', () => {
         newQuotes[s.id] = buildInitialQuote(s)
         tickHistories[s.id] = { prices: [], volumes: [], lastVol: 0, lastDelta: 0 }
       }
+
+      // 收盤時，用上次儲存的掃描快照覆蓋（保留連量連次週轉率）
+      if (!isMarketOpen()) {
+        const saved = loadQuotes()
+        if (saved) {
+          for (const id of Object.keys(newQuotes)) {
+            if (saved[id]) newQuotes[id] = { ...newQuotes[id], ...saved[id] }
+          }
+        }
+      }
+
       quotes.value = newQuotes
 
       isInitialized.value = true
@@ -150,6 +178,7 @@ export const useScannerStore = defineStore('scanner', () => {
 
       scanCount.value++
       lastUpdate.value = new Date()
+      saveQuotes(quotes.value)   // 每次掃描後持久化，收盤後重開頁面仍可讀取
     } finally {
       scanning = false
     }
