@@ -2,40 +2,30 @@
  * Cloudflare Worker — CORS Proxy for TWSE MIS API
  *
  * 部署：
- *   wrangler deploy proxy.js --name stock-proxy --compatibility-date 2024-01-01
+ *   wrangler deploy
  *
  * 使用：
- *   GET https://stock-proxy.你的帳號.workers.dev/?url=https://mis.twse.com.tw/...
+ *   GET https://stock-proxy.johnson-tw.workers.dev/?url=https://mis.twse.com.tw/...
  */
-
-// ── 設定：允許呼叫此 proxy 的前端來源 ────────────────────────────
-const ALLOWED_ORIGINS = [
-  'https://engineerjohnson.github.io',          // GitHub Pages（若改為 Public）
-  'https://stock-signal-app.vercel.app',         // Vercel 主網址
-  'https://stock-signal-app-engineerjohnson.vercel.app', // Vercel 備用網址
-  'http://localhost:5173',
-  'http://localhost:4173',
-]
 
 // 安全白名單：只允許代理這些 host
 const ALLOWED_TARGET_HOSTS = [
   'mis.twse.com.tw',
   'www.twse.com.tw',
+  'openapi.twse.com.tw',
 ]
 
 // ─────────────────────────────────────────────────────────────────
 export default {
   async fetch(request) {
-    const origin = request.headers.get('Origin') || ''
-
     // CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders(origin) })
+      return new Response(null, { status: 204, headers: corsHeaders() })
     }
 
     // 只接受 GET
     if (request.method !== 'GET') {
-      return new Response('Method not allowed', { status: 405 })
+      return new Response('Method not allowed', { status: 405, headers: corsHeaders() })
     }
 
     // 從 query string 取目標 URL
@@ -43,7 +33,7 @@ export default {
     const targetUrl = reqUrl.searchParams.get('url')
 
     if (!targetUrl) {
-      return new Response('Missing ?url= parameter', { status: 400 })
+      return new Response('Missing ?url= parameter', { status: 400, headers: corsHeaders() })
     }
 
     // 驗證目標 host 在白名單內
@@ -51,11 +41,11 @@ export default {
     try {
       targetHost = new URL(targetUrl).hostname
     } catch {
-      return new Response('Invalid url parameter', { status: 400 })
+      return new Response('Invalid url parameter', { status: 400, headers: corsHeaders() })
     }
 
     if (!ALLOWED_TARGET_HOSTS.includes(targetHost)) {
-      return new Response(`Target host "${targetHost}" not allowed`, { status: 403 })
+      return new Response(`Target host "${targetHost}" not allowed`, { status: 403, headers: corsHeaders() })
     }
 
     // 轉發請求到 TWSE
@@ -69,7 +59,7 @@ export default {
         },
       })
     } catch (err) {
-      return new Response(`Upstream fetch failed: ${err.message}`, { status: 502 })
+      return new Response(`Upstream fetch failed: ${err.message}`, { status: 502, headers: corsHeaders() })
     }
 
     const body = await upstream.text()
@@ -79,16 +69,15 @@ export default {
       headers: {
         'Content-Type':  'application/json; charset=UTF-8',
         'Cache-Control': 'no-store, no-cache',
-        ...corsHeaders(origin),
+        ...corsHeaders(),
       },
     })
   },
 }
 
-function corsHeaders(origin) {
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0]
+function corsHeaders() {
   return {
-    'Access-Control-Allow-Origin':  allowedOrigin,
+    'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Accept',
     'Access-Control-Max-Age':       '86400',
