@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const PROXY_URL = import.meta.env.VITE_PROXY_URL
+const PROXY_URL = import.meta.env.VITE_PROXY_URL || 'https://stock-proxy.johnson-tw.workers.dev'
 
 /**
  * 透過 Proxy 轉發請求，繞過 TWSE MIS 的 CORS 限制。
