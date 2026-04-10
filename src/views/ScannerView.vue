@@ -4,7 +4,7 @@
     <!-- ── Header ─────────────────────────────────────────────── -->
     <header class="sticky top-0 z-20 bg-gray-950 border-b border-gray-800">
 
-      <!-- 頂列：標題 + 時間 -->
+      <!-- 頂列：標題 + 市場狀態 + 時間 -->
       <div class="flex items-center justify-between px-3 py-2">
         <h1 class="text-white font-bold text-sm tracking-wide">📈 飆股雷達</h1>
         <div class="flex items-center gap-2">
@@ -15,24 +15,24 @@
         </div>
       </div>
 
-      <!-- Tab 列 -->
-      <div class="flex border-b border-gray-800">
+      <!-- Tab 列（橫向捲動） -->
+      <div class="tab-scroller flex overflow-x-auto border-b border-gray-800 bg-gray-950">
         <button
           v-for="tab in tabs"
           :key="tab.value"
           :class="[
-            'flex-1 py-1.5 text-xs font-medium transition-colors',
+            'shrink-0 px-3 py-1.5 text-[11px] font-medium whitespace-nowrap transition-colors',
             store.activeTab === tab.value
-              ? 'text-white border-b-2 border-orange-400'
+              ? 'text-white border-b-2 border-orange-400 bg-gray-900/50'
               : 'text-gray-500 hover:text-gray-300',
           ]"
           @click="store.activeTab = tab.value"
         >{{ tab.label }}</button>
       </div>
 
-      <!-- 連次門檻（僅盤中、且非「全部/推薦」tab 顯示） -->
+      <!-- 連次門檻（僅盤中、強勢/弱勢/資金焦點 tab 顯示） -->
       <div
-        v-if="isOpen && store.activeTab !== 'recommended' && store.activeTab !== 'all'"
+        v-if="isOpen && showThreshold"
         class="flex items-center gap-2 px-3 py-1.5 bg-gray-900 border-b border-gray-800"
       >
         <span class="text-gray-500 text-[11px] shrink-0">連次門檻</span>
@@ -47,39 +47,61 @@
         >{{ t }}次</button>
       </div>
 
-      <!-- 欄位標題列（可點擊排序） -->
-      <div v-if="!store.isLoading" class="flex items-center px-2 py-1 bg-gray-900 border-b border-gray-800 text-[10px] text-gray-500">
-        <div class="w-3 shrink-0"></div>
-        <div class="w-[72px] shrink-0 pl-1">K棒/股票</div>
-        <div
-          class="w-[68px] shrink-0 text-right cursor-pointer"
-          :class="sortHighlight('changePercent')"
-          @click="store.setSort('changePercent')"
-        >成交價<br>漲跌幅{{ sortArrow('changePercent') }}</div>
-        <div class="w-[50px] shrink-0 text-right text-[9px] leading-tight">昨量比<br>昨漲幅</div>
-        <div
-          class="w-[52px] shrink-0 text-center cursor-pointer leading-tight"
-          @click="onSortTicksVol"
-        >
-          <span :class="sortHighlight('consecutiveTicks')">連次{{ sortArrow('consecutiveTicks') }}</span>
-          <span class="text-gray-700 mx-0.5">/</span>
-          <span :class="sortHighlight('consecutiveVolume')">連量{{ sortArrow('consecutiveVolume') }}</span>
+      <!-- 欄位標題列 + 排序按鈕 -->
+      <div v-if="!store.isLoading" class="flex items-center px-2 py-1 bg-gray-900 border-b border-gray-800 text-[10px]">
+        <!-- K棒占位 -->
+        <div class="w-4 shrink-0"></div>
+
+        <!-- 股票名稱（不可排序） -->
+        <div class="w-[70px] shrink-0 pl-1 text-gray-500">股票</div>
+
+        <!-- 成交價 / 漲跌幅 -->
+        <div class="w-[62px] shrink-0 text-right leading-tight text-gray-500">
+          <div>成交價</div>
+          <div>漲跌幅</div>
         </div>
-        <div
-          class="w-[46px] shrink-0 text-right cursor-pointer leading-tight"
-          :class="sortHighlight('turnoverRate')"
-          @click="store.setSort('turnoverRate')"
-        >週轉率<br>{{ sortArrow('turnoverRate') }}</div>
-        <div class="flex-1 text-center">走勢</div>
+
+        <!-- 量比（時間修正） -->
+        <div class="w-[46px] shrink-0 text-right leading-tight text-gray-500">量比</div>
+
+        <!-- 連次 -->
+        <div class="w-[28px] shrink-0 text-center leading-tight text-gray-500">連次</div>
+
+        <!-- 連量 -->
+        <div class="w-[36px] shrink-0 text-center leading-tight text-gray-500">連量</div>
+
+        <!-- 成交量 / 周轉率 -->
+        <div class="w-[46px] shrink-0 text-right leading-tight text-gray-500">
+          <div>成交量</div>
+          <div>週轉%</div>
+        </div>
+
+        <!-- 走勢 + 排序按鈕 -->
+        <div class="flex-1 flex items-center justify-end gap-1">
+          <span class="text-gray-500">走勢</span>
+          <button
+            @click="showSortSheet = true"
+            class="ml-1 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-gray-700 text-gray-200 text-[10px] font-medium"
+          >
+            <span>⇅</span>
+            <span class="text-orange-400">{{ currentSortLabel }}</span>
+          </button>
+        </div>
       </div>
     </header>
 
     <!-- ── 收盤 banner ─────────────────────────────────────────── -->
     <div
       v-if="!isOpen && !store.isLoading"
-      class="flex items-center gap-2 px-3 py-1.5 bg-gray-800/60 border-b border-gray-700 text-[11px] text-gray-400"
+      class="flex items-center gap-2 px-3 py-1.5 bg-indigo-950/60 border-b border-indigo-800/50 text-[11px] text-indigo-300"
     >
-      🌙 收盤，顯示最後交易資料（{{ currentList.length }} 檔）
+      <span>🌙 盤後模式</span>
+      <span class="text-indigo-500">｜</span>
+      <span v-if="store.dataDate" class="text-indigo-400">📅 資料日期 {{ store.dataDate }}</span>
+      <span v-else-if="store.lastUpdate" class="text-indigo-400">快照 {{ lastUpdateStr }}</span>
+      <span v-else class="text-indigo-500">顯示昨日收盤數據（量比需曾於盤中開啟過才有值）</span>
+      <span v-if="store.isDailyMode" class="ml-2 text-emerald-400 font-semibold">📊 日K連次</span>
+      <span class="ml-auto text-indigo-600 shrink-0">近漲跌停、量增價漲等 tab 可用</span>
     </div>
 
     <!-- ── 載入中 ─────────────────────────────────────────────── -->
@@ -92,14 +114,11 @@
       <!-- 狀態列 -->
       <div class="flex justify-between items-center px-3 py-1 text-[11px] text-gray-500 bg-gray-900/40 border-b border-gray-900">
         <span>
-          <template v-if="store.activeTab === 'recommended'">推薦 <b class="text-orange-400">{{ currentList.length }}</b> 檔</template>
-          <template v-else-if="store.activeTab === 'capitalFocus'">資金焦點 <b class="text-orange-400">{{ currentList.length }}</b> 檔</template>
-          <template v-else-if="store.activeTab === 'highTurnover'">高換手 <b class="text-orange-400">{{ currentList.length }}</b> 檔</template>
-          <template v-else-if="isOpen">訊號 <b class="text-white">{{ currentList.length }}</b> 檔</template>
-          <template v-else>股票 <b class="text-white">{{ currentList.length }}</b> 檔</template>
+          {{ tabLabel }} <b :class="currentList.length ? 'text-white' : 'text-gray-600'">{{ currentList.length }}</b> 檔
+          <span v-if="!isOpen && !isLastUpdateToday" class="text-gray-600 ml-1">（前次收盤資料）</span>
         </span>
-        <span v-if="store.scanCount < 3 && isOpen" class="text-yellow-500 animate-pulse">累積資料中…</span>
-        <span v-else>更新 {{ lastUpdateStr }}</span>
+        <span v-if="store.scanCount < 3 && isOpen" class="text-yellow-500 animate-pulse">⏳ 累積資料中…</span>
+        <span v-else class="text-gray-600">更新 {{ lastUpdateStr }}</span>
       </div>
 
       <!-- 股票列表 -->
@@ -108,95 +127,91 @@
           v-for="stock in currentList"
           :key="stock.id"
           :class="[
-            'flex items-center px-2 py-2 transition-all',
+            'flex items-center px-2 py-1.5 transition-all',
             stock.isNew ? 'bg-amber-950/30 border-l-2 border-amber-400' : 'border-l-2 border-transparent',
             store.activeTab === 'recommended' ? 'bg-orange-950/10' : '',
           ]"
         >
-          <!-- K棒 -->
-          <div class="w-3 shrink-0 mr-1">
-            <svg width="10" height="28" viewBox="0 0 10 28">
-              <!-- wick -->
-              <line x1="5" y1="0" x2="5" y2="28" :stroke="stock.changePercent >= 0 ? '#f87171' : '#4ade80'" stroke-width="1" opacity="0.4"/>
-              <!-- body -->
-              <rect
-                x="1"
-                :y="kBarY(stock)"
-                width="8"
-                :height="kBarH(stock)"
-                :fill="stock.changePercent >= 0 ? '#ef4444' : '#22c55e'"
-                rx="1"
-              />
+          <!-- K棒 SVG -->
+          <div class="w-4 shrink-0 flex justify-center">
+            <svg width="8" height="26" viewBox="0 0 8 26">
+              <line x1="4" y1="0" x2="4" y2="26"
+                :stroke="stock.changePercent >= 0 ? '#f87171' : '#4ade80'"
+                stroke-width="1" opacity="0.35"/>
+              <rect x="0" :y="kBarY(stock)" width="8" :height="kBarH(stock)"
+                :fill="stock.changePercent >= 0 ? '#ef4444' : '#22c55e'" rx="1"/>
             </svg>
           </div>
 
-          <!-- 股票名稱 + 代號 + 收藏 -->
-          <div class="w-[72px] shrink-0 pr-1 min-w-0">
+          <!-- 股票名稱 + 代號 + ★ -->
+          <div class="w-[70px] shrink-0 pr-1 min-w-0">
             <div class="flex items-center gap-0.5">
               <span class="text-white text-xs font-medium truncate leading-tight">{{ stock.name }}</span>
               <button
-                :class="['text-[10px] leading-none shrink-0', watchlist.has(stock.id) ? 'text-yellow-400' : 'text-gray-700']"
+                :class="['text-[10px] leading-none shrink-0', watchlist.has(stock.id) ? 'text-yellow-400' : 'text-gray-700 hover:text-gray-500']"
                 @click.stop="watchlist.has(stock.id) ? watchlist.remove(stock.id) : watchlist.add(stock.id)"
               >★</button>
             </div>
-            <div class="text-gray-500 text-[10px] font-mono">{{ stock.id }}</div>
+            <div class="text-gray-500 text-[10px] font-mono leading-tight">{{ stock.id }}</div>
           </div>
 
           <!-- 成交價 + 漲跌幅 -->
-          <div class="w-[68px] shrink-0 text-right">
-            <div :class="['font-mono font-bold text-sm leading-tight', changeColor(stock.changePercent)]">
+          <div class="w-[62px] shrink-0 text-right">
+            <div :class="['font-mono font-bold text-[13px] leading-tight', changeColor(stock.changePercent)]">
               {{ fmtPrice(stock.price) }}
             </div>
-            <div :class="['font-mono text-[11px]', changeColor(stock.changePercent)]">
+            <div :class="['font-mono text-[11px] leading-tight', changeColor(stock.changePercent)]">
               {{ fmtPercent(stock.changePercent) }}
             </div>
           </div>
 
-          <!-- 昨量比 + 昨漲幅 -->
-          <div class="w-[50px] shrink-0 text-right">
-            <div :class="['text-[11px] font-medium', ratioColor(stock.volumeVsYesterday)]">
+          <!-- 昨量比 + 昨收漲跌（盤後顯示昨量比，盤中顯示今昨差） -->
+          <div class="w-[46px] shrink-0 text-right">
+            <div :class="['text-[11px] font-medium leading-tight', ratioColor(stock.volumeVsYesterday)]">
               {{ fmtRatio(stock.volumeVsYesterday) }}
             </div>
-            <div :class="['text-[10px]', changeColor(stock.yesterdayChangePercent)]">
-              {{ fmtPercent(stock.yesterdayChangePercent) }}
+            <div v-if="isOpen" :class="['text-[10px] leading-tight', changeColor(stock.yesterdayChangePercent)]">
+              昨{{ fmtPercent(stock.yesterdayChangePercent) }}
+            </div>
+            <div v-else class="text-[10px] leading-tight text-gray-600">
+              量比
             </div>
           </div>
 
-          <!-- 連次 / 連量 (boxed) -->
-          <div class="w-[52px] shrink-0 flex flex-col items-center">
-            <div
-              :class="[
-                'w-full text-center font-bold text-[11px] leading-tight border rounded-sm px-0.5',
-                stock.consecutiveTicks !== 0
-                  ? (stock.consecutiveTicks > 0 ? 'border-red-500/60 text-red-400 bg-red-950/30' : 'border-green-500/60 text-green-400 bg-green-950/30')
-                  : 'border-gray-700 text-gray-500',
-              ]"
-            >{{ Math.abs(stock.consecutiveTicks) || '—' }}</div>
-            <div class="w-full border-t border-gray-700 my-0.5"></div>
-            <div
-              :class="[
-                'w-full text-center font-bold text-[11px] leading-tight border rounded-sm px-0.5',
-                stock.consecutiveVolume !== 0
-                  ? (stock.consecutiveVolume > 0 ? 'border-orange-500/60 text-orange-400 bg-orange-950/30' : 'border-blue-500/60 text-blue-400 bg-blue-950/30')
-                  : 'border-gray-700 text-gray-500',
-              ]"
-            >{{ fmtConsecVol(stock.consecutiveVolume) }}</div>
+          <!-- 連次（boxed） -->
+          <div class="w-[28px] shrink-0 flex justify-center">
+            <div :class="[
+              'w-full text-center font-bold text-[11px] leading-tight border rounded-sm px-0.5',
+              stock.consecutiveTicks > 0 ? 'border-red-500/60 text-red-400 bg-red-950/30'
+                : stock.consecutiveTicks < 0 ? 'border-green-500/60 text-green-400 bg-green-950/30'
+                : 'border-gray-700/50 text-gray-600',
+            ]">{{ Math.abs(stock.consecutiveTicks) || '—' }}</div>
           </div>
 
-          <!-- 週轉率 -->
+          <!-- 連量（boxed） -->
+          <div class="w-[36px] shrink-0 flex justify-center">
+            <div :class="[
+              'w-full text-center font-bold text-[11px] leading-tight border rounded-sm px-0.5',
+              stock.consecutiveVolume > 0 ? 'border-orange-500/60 text-orange-400 bg-orange-950/30'
+                : stock.consecutiveVolume < 0 ? 'border-blue-500/60 text-blue-400 bg-blue-950/30'
+                : 'border-gray-700/50 text-gray-600',
+            ]">{{ fmtConsecVol(stock.consecutiveVolume) }}</div>
+          </div>
+
+          <!-- 成交量 + 周轉率 -->
           <div class="w-[46px] shrink-0 text-right">
-            <div class="text-[12px] font-medium text-gray-200 leading-tight">
-              {{ stock.turnoverRate > 0 ? stock.turnoverRate.toFixed(1) + '%' : '—' }}
+            <div class="text-[11px] font-medium text-gray-200 leading-tight">
+              {{ stock.volume > 0 ? fmtVolume(stock.volume) : '—' }}
             </div>
-            <div class="text-[10px] text-gray-500">
-              {{ fmtDeltaVol(stock.lastDeltaVol) }}
+            <div class="text-[10px] text-gray-500 leading-tight">
+              {{ fmtTurnover(stock.turnoverRate) }}
             </div>
           </div>
 
           <!-- 即時走勢 sparkline -->
           <div class="flex-1 flex items-center justify-center">
             <svg v-if="stock.recentPrices && stock.recentPrices.length >= 2"
-              width="40" height="22" viewBox="0 0 40 22" class="overflow-visible">
+              width="38" height="20" viewBox="0 0 38 20" class="overflow-visible">
               <polyline
                 :points="sparkline(stock.recentPrices)"
                 fill="none"
@@ -212,13 +227,56 @@
       </TransitionGroup>
 
       <!-- 空狀態 -->
-      <div v-if="currentList.length === 0" class="flex flex-col items-center justify-center py-24 gap-3 text-gray-600">
-        <span class="text-5xl">🔍</span>
-        <p class="text-sm">目前無符合條件的股票</p>
-        <p v-if="store.activeTab !== 'recommended'" class="text-xs">降低門檻或等待訊號出現</p>
-        <p v-else class="text-xs">盤中累積資料後自動顯示推薦</p>
+      <div v-if="currentList.length === 0" class="flex flex-col items-center justify-center py-20 gap-3 text-gray-600">
+        <span class="text-4xl">{{ emptyIcon }}</span>
+        <p class="text-sm">{{ emptyMsg }}</p>
       </div>
     </template>
+
+    <!-- ── 排序選擇底部面板 ──────────────────────────────────────── -->
+    <Transition name="sheet">
+      <div v-if="showSortSheet" class="fixed inset-0 z-50 flex flex-col justify-end" @click.self="showSortSheet = false">
+        <!-- 半透明遮罩 -->
+        <div class="absolute inset-0 bg-black/60" @click="showSortSheet = false"></div>
+
+        <!-- 面板主體 -->
+        <div class="relative bg-gray-900 rounded-t-2xl pb-safe overflow-hidden">
+          <!-- 把手 -->
+          <div class="flex justify-center pt-3 pb-1">
+            <div class="w-10 h-1 bg-gray-600 rounded-full"></div>
+          </div>
+
+          <div class="px-4 pb-2 text-center text-gray-400 text-xs">選擇排序方式</div>
+
+          <!-- 排序選項 -->
+          <div class="divide-y divide-gray-800">
+            <div
+              v-for="opt in sortOptions"
+              :key="opt.field + opt.asc"
+              @click="applySort(opt)"
+              class="flex items-center px-5 py-3.5 active:bg-gray-800 cursor-pointer"
+            >
+              <!-- 勾選狀態 -->
+              <span class="w-5 text-orange-400 text-sm">
+                {{ store.sortField === opt.field && store.sortAsc === opt.asc ? '✓' : '' }}
+              </span>
+              <!-- 欄位名 -->
+              <span class="flex-1 text-white text-sm">{{ opt.label }}</span>
+              <!-- 方向 -->
+              <span :class="['text-xs font-medium px-2 py-0.5 rounded-full', opt.asc ? 'bg-blue-900 text-blue-300' : 'bg-red-900 text-red-300']">
+                {{ opt.asc ? '↑ 低 → 高' : '↓ 高 → 低' }}
+              </span>
+            </div>
+          </div>
+
+          <!-- 取消 -->
+          <button
+            @click="showSortSheet = false"
+            class="w-full py-4 text-gray-400 text-sm font-medium border-t border-gray-800 mt-1"
+          >取消</button>
+        </div>
+      </div>
+    </Transition>
 
   </div>
 </template>
@@ -229,21 +287,40 @@ import { useScannerStore } from '@/stores/scanner.js'
 import { useWatchlistStore } from '@/stores/watchlist.js'
 import { getMarketStatus, isMarketOpen } from '@/composables/useMarketHours.js'
 import {
-  fmtPrice, fmtPercent, fmtRatio, fmtDeltaVol, fmtConsecVol,
+  fmtPrice, fmtPercent, fmtRatio, fmtDeltaVol, fmtConsecVol, fmtVolume, fmtTurnover,
   changeColor, ratioColor,
 } from '@/utils/formatters.js'
 
 const store     = useScannerStore()
 const watchlist = useWatchlistStore()
 
+// ── Tab 定義（完整仿照當沖飆股神手） ───────────────────────────
 const tabs = [
-  { value: 'strong',       label: '強勢 🔴' },
-  { value: 'weak',         label: '弱勢 🟢' },
-  { value: 'capitalFocus', label: '資金焦點 🟠' },
-  { value: 'highTurnover', label: '高換手 ⚡' },
-  { value: 'recommended',  label: '推薦 ⭐' },
-  { value: 'all',          label: '全部' },
+  { value: 'strong',           label: '強勢 🔴',      desc: '強勢' },
+  { value: 'weak',             label: '弱勢 🟢',      desc: '弱勢' },
+  { value: 'longCandidate',    label: '做多 📈',      desc: '做多候選' },
+  { value: 'shortCandidate',   label: '做空 📉',      desc: '做空候選' },
+  { value: 'surging',          label: '飆風向上 🌪',   desc: '飆風向上' },
+  { value: 'warrantLong',      label: '權證做多 🎯',   desc: '權證做多' },
+  { value: 'instBuy',          label: '主投買進 💼',   desc: '主投買進' },
+  { value: 'instBuyUp',        label: '主投買沿上 🏔', desc: '主投買沿上' },
+  { value: 'capitalAttention', label: '資金關注焦點 🔍', desc: '資金關注焦點' },
+  { value: 'capitalFocus',     label: '資金焦點 🟠',  desc: '資金焦點' },
+  { value: 'volumeUp',         label: '量增價漲 🔼',  desc: '量增價漲' },
+  { value: 'volumeDown',       label: '縮量上漲 🔽',  desc: '縮量上漲' },
+  { value: 'highTurnover',     label: '大量換手 ⚡',   desc: '大量換手' },
+  { value: 'highTurnoverRisk', label: '換手高危 🚨',   desc: '換手高危' },
+  { value: 'limitUp',          label: '近漲停 🚀',    desc: '近漲停' },
+  { value: 'limitDown',        label: '近跌停 💀',    desc: '近跌停' },
+  { value: 'recommended',      label: '推薦飆股 ⭐',  desc: '推薦飆股' },
+  { value: 'watchlistTab',     label: '自選股 ☆',     desc: '自選股' },
+  { value: 'all',              label: '全部',          desc: '全部' },
 ]
+
+// 哪些 tab 需要顯示連次門檻設定
+const THRESHOLD_TABS = new Set(['strong', 'weak', 'capitalFocus'])
+
+const showThreshold = computed(() => THRESHOLD_TABS.has(store.activeTab))
 
 // ── 時鐘 & 市場狀態 ────────────────────────────────────────────
 const currentTime  = ref('')
@@ -267,50 +344,130 @@ onUnmounted(() => clearInterval(clockTimer))
 // ── 目前顯示清單 ───────────────────────────────────────────────
 const currentList = computed(() => {
   if (store.activeTab === 'recommended') return store.recommended
-  if (!isOpen.value) return store.allPoolStocks  // 收盤後固定顯示全部
-  return store.signals
+  if (store.activeTab === 'watchlistTab') {
+    const wIds = new Set(watchlist.items || [])
+    // 直接從 quotes 取，不受 yesterdayVolume 過濾限制（避免手動加入的低流動性股票消失）
+    return store.applySort(Object.values(store.quotes).filter(s => wIds.has(s.id)))
+  }
+  // 'all' tab：全部股票，排序後取前100（避免渲染幾百行）
+  if (store.activeTab === 'all') return store.allPoolStocks.slice(0, 100)
+  // 其他 tab：篩選後取前50（篩選結果通常不多，但避免極端情況）
+  return store.signals.slice(0, 50)
+})
+
+// 當前 tab 的文字描述（用於狀態列）
+const tabLabel = computed(() => {
+  const t = tabs.find(t => t.value === store.activeTab)
+  return t ? t.desc : ''
 })
 
 // ── 最後更新時間 ───────────────────────────────────────────────
 const lastUpdateStr = computed(() => {
   if (!store.lastUpdate) return '--'
-  return store.lastUpdate.toLocaleTimeString('zh-TW', { hour12: false })
+  const d = store.lastUpdate
+  const now = new Date()
+  const sameDay = d.toDateString() === now.toDateString()
+  return sameDay
+    ? d.toLocaleTimeString('zh-TW', { hour12: false })
+    : d.toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' }) +
+      ' ' + d.toLocaleTimeString('zh-TW', { hour12: false })
 })
 
+const isLastUpdateToday = computed(() =>
+  store.lastUpdate != null && store.lastUpdate.toDateString() === new Date().toDateString()
+)
+
+// ── 空狀態提示 ─────────────────────────────────────────────────
+const emptyIcon = computed(() => {
+  const map = {
+    strong: '🔴', weak: '🟢', longCandidate: '📈', shortCandidate: '📉',
+    surging: '🌪', warrantLong: '🎯', instBuy: '💼', instBuyUp: '🏔',
+    capitalAttention: '🔍', capitalFocus: '🟠',
+    volumeUp: '🔼', volumeDown: '🔽',
+    highTurnover: '⚡', highTurnoverRisk: '🚨',
+    limitUp: '🚀', limitDown: '💀',
+    recommended: '⭐', watchlistTab: '☆', all: '🔍',
+  }
+  return map[store.activeTab] || '🔍'
+})
+const emptyMsg = computed(() => {
+  const msgs = {
+    watchlistTab:     '尚未加入自選股，點 ★ 加入',
+    recommended:      '盤中累積資料後自動顯示推薦（需連漲≥2次 + 有連量 + 量比≥1.5x）',
+    limitUp:          '目前無股票接近漲停板 (≥9%)',
+    limitDown:        '目前無股票接近跌停板 (≤-9%)',
+    longCandidate:    '目前無做多候選（漲≥2% + 連漲≥2次 + 量比≥1.5x）',
+    shortCandidate:   '目前無做空候選（跌≥2% + 連跌≥2次 + 量比≥1.5x）',
+    warrantLong:      '目前無適合買認購權證的標的（漲1%~8% + 連漲≥2次 + 量比≥1.3x）',
+    instBuy:          '目前無主投買進特徵（連漲≥2次 + 連量≥200張 + 量比≥1.5x）',
+    instBuyUp:        '目前無主投買沿上特徵（連漲≥5次 + 連量≥200張 + 漲≥1.5%）',
+    surging:          '目前無飆風向上股（漲≥3% + 連漲≥3次 + 量比≥2.5x）',
+    capitalAttention: '目前無資金關注焦點（漲≥2% + 連漲≥3次 + 連量≥300張 + 量比≥2x）',
+    highTurnoverRisk: '目前無換手高危訊號（量比≥3x + 漲幅≥5%）',
+  }
+  return msgs[store.activeTab] || '目前無符合條件的股票，可降低門檻或等待訊號'
+})
+
+// ── 排序底部面板 ──────────────────────────────────────────────
+const showSortSheet = ref(false)
+
+const sortOptions = [
+  { field: 'consecutiveVolume', asc: false, label: '連量' },
+  { field: 'consecutiveVolume', asc: true,  label: '連量' },
+  { field: 'consecutiveTicks',  asc: false, label: '連次' },
+  { field: 'consecutiveTicks',  asc: true,  label: '連次' },
+  { field: 'changePercent',     asc: false, label: '漲跌幅' },
+  { field: 'changePercent',     asc: true,  label: '漲跌幅' },
+  { field: 'volumeVsYesterday', asc: false, label: '昨量比' },
+  { field: 'volumeVsYesterday', asc: true,  label: '昨量比' },
+  { field: 'volume',            asc: false, label: '成交量' },
+  { field: 'volume',            asc: true,  label: '成交量' },
+]
+
+const SORT_LABELS = {
+  consecutiveVolume: '連量', consecutiveTicks: '連次',
+  changePercent: '漲跌幅', volumeVsYesterday: '昨量比', volume: '成交量',
+}
+
+const currentSortLabel = computed(() => {
+  const name = SORT_LABELS[store.sortField] || store.sortField
+  const dir  = store.sortAsc ? '↑低→高' : '↓高→低'
+  return `${name} ${dir}`
+})
+
+function applySort(opt) {
+  store.sortField = opt.field
+  store.sortAsc   = opt.asc
+  showSortSheet.value = false
+}
+
 // ── 排序輔助 ───────────────────────────────────────────────────
-function sortHighlight(field) {
-  return store.sortField === field ? 'text-orange-400' : ''
+function sortHeaderCls(field) {
+  return store.sortField === field
+    ? 'text-orange-400 cursor-pointer'
+    : 'text-gray-500 cursor-pointer'
 }
 function sortArrow(field) {
   if (store.sortField !== field) return ''
-  return store.sortAsc ? '↑' : '↓'
-}
-// 點連次/連量欄：交替切換兩個 field
-function onSortTicksVol() {
-  if (store.sortField === 'consecutiveTicks') {
-    store.setSort('consecutiveVolume')
-  } else {
-    store.setSort('consecutiveTicks')
-  }
+  return store.sortAsc ? '↑低→高' : '↓高→低'
 }
 
 // ── K棒 ────────────────────────────────────────────────────────
 function kBarH(s) {
   const pct = Math.abs(s.changePercent || 0)
-  return Math.min(20, Math.max(3, pct * 3))
+  return Math.min(18, Math.max(3, pct * 2.5))
 }
 function kBarY(s) {
   const h = kBarH(s)
-  const isUp = (s.changePercent || 0) >= 0
-  return isUp ? (14 - h) : 14
+  return (s.changePercent || 0) >= 0 ? (13 - h) : 13
 }
 
 // ── Sparkline ──────────────────────────────────────────────────
 function sparkline(prices) {
-  const w = 40, h = 20
+  const w = 38, h = 18
   const min = Math.min(...prices)
   const max = Math.max(...prices)
-  const range = max - min || 1
+  const range = max - min || 0.01
   return prices.map((p, i) => {
     const x = (i / (prices.length - 1)) * w
     const y = h - ((p - min) / range) * h
@@ -325,9 +482,26 @@ function sparkColor(s) {
 </script>
 
 <style scoped>
-.list-move         { transition: transform 0.35s ease; }
-.list-enter-active { transition: opacity 0.25s ease, transform 0.25s ease; }
-.list-leave-active { transition: opacity 0.2s ease; position: absolute; width: 100%; }
-.list-enter-from   { opacity: 0; transform: translateX(-12px); }
+/* tab 橫向捲動列：桌機顯示細捲軸，手機觸控滑動無捲軸 */
+.tab-scroller { -webkit-overflow-scrolling: touch; }
+.tab-scroller::-webkit-scrollbar { height: 3px; }
+.tab-scroller::-webkit-scrollbar-track { background: transparent; }
+.tab-scroller::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 2px; }
+@supports (scrollbar-width: thin) {
+  .tab-scroller { scrollbar-width: thin; scrollbar-color: #4b5563 transparent; }
+}
+
+.list-move         { transition: transform 0.3s ease; }
+.list-enter-active { transition: opacity 0.2s ease, transform 0.2s ease; }
+.list-leave-active { transition: opacity 0.15s ease; position: absolute; width: 100%; }
+.list-enter-from   { opacity: 0; transform: translateX(-10px); }
 .list-leave-to     { opacity: 0; }
+
+/* 底部面板動畫 */
+.sheet-enter-active, .sheet-leave-active { transition: opacity 0.2s ease; }
+.sheet-enter-active .relative, .sheet-leave-active .relative { transition: transform 0.25s ease; }
+.sheet-enter-from { opacity: 0; }
+.sheet-enter-from .relative { transform: translateY(100%); }
+.sheet-leave-to { opacity: 0; }
+.sheet-leave-to .relative { transform: translateY(100%); }
 </style>

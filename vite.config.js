@@ -30,6 +30,12 @@ export default defineConfig(({ mode }) => {
           secure: false,
           rewrite: path => path.replace(/^\/api\/twse-openapi/, ''),
         },
+        '/api/twse-www': {
+          target: 'https://www.twse.com.tw',
+          changeOrigin: true,
+          secure: false,
+          rewrite: path => path.replace(/^\/api\/twse-www/, ''),
+        },
       },
     },
 
