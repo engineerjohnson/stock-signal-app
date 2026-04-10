@@ -150,11 +150,17 @@ export async function fetchStockPool() {
   // www endpoint 在 rawResp.date 直接給 "115/04/10" 格式
   let dataDate = null
   if (!Array.isArray(rawResp) && rawResp?.date) {
-    // "115/04/10" → 2026/04/10
-    const parts = rawResp.date.split('/')
-    if (parts.length === 3) {
-      const y = parseInt(parts[0]) + 1911
-      dataDate = `${y}/${parts[1]}/${parts[2]}`
+    const d = String(rawResp.date).replace(/-/g, '')
+    if (/^\d{8}$/.test(d)) {
+      // "20260410" → 2026/04/10（西元8碼格式）
+      dataDate = `${d.slice(0, 4)}/${d.slice(4, 6)}/${d.slice(6, 8)}`
+    } else {
+      // "115/04/10" → 2026/04/10（民國斜線格式，備用）
+      const parts = rawResp.date.split('/')
+      if (parts.length === 3) {
+        const y = parseInt(parts[0]) + 1911
+        dataDate = `${y}/${parts[1]}/${parts[2]}`
+      }
     }
   } else {
     // fallback：從 openapi 資料的 Date 欄位解析
