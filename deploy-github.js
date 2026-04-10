@@ -52,7 +52,7 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_PROXY_URL: \${{ secrets.VITE_PROXY_URL }}
+          VITE_PROXY_URL: \${{ secrets.VITE_PROXY_URL || 'https://stock-proxy.johnson-tw.workers.dev' }}
           VITE_REPO_NAME: \${{ github.event.repository.name }}
 
       - name: Upload Pages artifact
@@ -75,27 +75,31 @@ fs.writeFileSync(path.join(workflowDir, 'deploy.yml'), deployYml)
 console.log('✅ .github/workflows/deploy.yml 建立完成')
 
 // 2. Git init & commit & push
-const run = (cmd) => {
+const run = (cmd, ignoreError = false) => {
   console.log(`> ${cmd}`)
   try {
     execSync(cmd, { stdio: 'inherit', cwd: __dirname })
   } catch (e) {
-    // 忽略非致命錯誤（例如 remote already exists）
+    if (!ignoreError) throw e
   }
 }
 
+const runSafe = (cmd) => run(cmd, true)
+
 console.log('\n[2/5] 初始化 git...')
-run('git init')
+runSafe('git init')
 run('git branch -M main')
 
-console.log('\n[3/5] 加入所有變更...')
-run('git add .')
+console.log('\n[3/5] 清除不該追蹤的檔案...')
+runSafe('git rm -r --cached node_modules')
+runSafe('git rm --cached .env')
 
-console.log('\n[4/5] Commit...')
-run('git commit -m "chore: add GitHub Actions workflow"')
+console.log('\n[4/5] 加入所有變更並 Commit...')
+run('git add .')
+runSafe('git commit -m "fix: use fallback worker URL, remove node_modules and .env from tracking"')
 
 console.log('\n[5/5] Push 到 GitHub...')
-run('git remote remove origin')
+runSafe('git remote remove origin')
 run(`git remote add origin https://engineerjohnson:${token}@github.com/engineerjohnson/stock-signal-app.git`)
 run('git push -f -u origin main')
 
