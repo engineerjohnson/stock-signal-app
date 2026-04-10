@@ -1,10 +1,15 @@
 import urllib.request
 import json
 import sys
+import os
 
-url = 'https://api.github.com/repos/engineerjohnson/stock-signal-app/actions/workflows/258886358/dispatches'
+url= 'https://api.github.com/repos/engineerjohnson/stock-signal-app/actions/workflows/258886358/dispatches'
+token = os.environ.get('GITHUB_TOKEN')
+if not token:
+    print('Error: GITHUB_TOKEN environment variable not set')
+    sys.exit(1)
 headers = {
-    'Authorization': 'token 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',
+    'Authorization': f'token {token}',
     'Accept': 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
     'Content-Type': 'application/json'
