@@ -61,11 +61,11 @@ export async function fetchStockPool() {
   const todayParam = new Date().toISOString().slice(0, 10).replace(/-/g, '')  // YYYYMMDD
   const wwwPath = `/rwd/zh/afterTrading/STOCK_DAY_ALL?date=${todayParam}&response=json`
 
-  const fetchDayAll = import.meta.env.DEV
-    ? axios.get(`${TWSE_WWW}${wwwPath}`, { timeout: 15000 })
-    : proxyGet(`${_TWSE}${wwwPath}`)
-
-  const rawResp = await fetchDayAll.then(r => r?.data ?? r)
+  // DEV: axios 返回 { data: {...} }，需要 .data 解包
+  // PROD: proxyGet 已返回解析後 JSON，不需再解包
+  const rawResp = import.meta.env.DEV
+    ? await axios.get(`${TWSE_WWW}${wwwPath}`, { timeout: 15000 }).then(r => r?.data ?? r)
+    : await proxyGet(`${_TWSE}${wwwPath}`)
 
   // www endpoint 回傳格式：{ stat, date, fields, data: [...rows] }
   // 每筆 data 是 array，欄位對應 fields
