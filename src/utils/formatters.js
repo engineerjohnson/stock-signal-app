@@ -82,7 +82,19 @@ export function fmtTick(n) {
 /** 連量標籤文字（中文）*/
 export function fmtVol(n) {
   if (n === 0) return '－'
-  return n > 0 ? `放量${n}次` : `縮量${Math.abs(n)}次`
+  return n > 0 ? `連漲積量` : `連跌積量`
+}
+
+/**
+ * 格式化連量顯示值（單位：張）
+ * 保持緊湊：≥10000 → 1.0萬，≥1000 → 1.1千，其他直接顯示
+ */
+export function fmtConsecVol(n) {
+  const abs = Math.abs(n)
+  if (abs === 0) return '—'
+  if (abs >= 10000) return `${(abs / 10000).toFixed(1)}萬`
+  if (abs >= 1000)  return `${(abs / 1000).toFixed(1)}千`
+  return String(abs)
 }
 
 /** 每筆 tick 量（張）*/

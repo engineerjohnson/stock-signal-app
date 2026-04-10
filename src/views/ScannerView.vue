@@ -1,145 +1,248 @@
 <template>
-  <div class="min-h-screen bg-slate-900 pb-16">
+  <div class="min-h-screen bg-gray-950 pb-16 select-none">
 
-    <!-- ── Header ───────────────────────────────────────────── -->
-    <header class="sticky top-0 z-10 bg-slate-900 border-b border-slate-700 px-4 py-2.5">
-      <div class="flex items-center justify-between">
-        <h1 class="text-white font-bold text-base tracking-wide">📈 當沖飆股神手</h1>
+    <!-- ── Header ─────────────────────────────────────────────── -->
+    <header class="sticky top-0 z-20 bg-gray-950 border-b border-gray-800">
+
+      <!-- 頂列：標題 + 時間 -->
+      <div class="flex items-center justify-between px-3 py-2">
+        <h1 class="text-white font-bold text-sm tracking-wide">📈 飆股雷達</h1>
         <div class="flex items-center gap-2">
-          <span :class="['text-xs font-medium px-2 py-0.5 rounded-full', marketStatus.cls]">
+          <span :class="['text-[11px] font-medium px-2 py-0.5 rounded-full', marketStatus.cls]">
             {{ marketStatus.text }}
           </span>
-          <span class="text-slate-400 text-xs font-mono tabular-nums">{{ currentTime }}</span>
+          <span class="text-gray-400 text-[11px] font-mono tabular-nums">{{ currentTime }}</span>
         </div>
       </div>
-    </header>
 
-    <!-- ── 收盤模式 Banner ────────────────────────────────────── -->
-    <div
-      v-if="!isOpen && !store.isLoading"
-      class="flex items-center gap-2 px-4 py-2 bg-slate-700/50 border-b border-slate-600 text-xs text-slate-300"
-    >
-      <span>🌙</span>
-      <span>收盤，顯示最後交易資料（共 {{ store.allPoolStocks.length }} 檔，依連量連次排序）</span>
-    </div>
+      <!-- Tab 列 -->
+      <div class="flex border-b border-gray-800">
+        <button
+          v-for="tab in tabs"
+          :key="tab.value"
+          :class="[
+            'flex-1 py-1.5 text-xs font-medium transition-colors',
+            store.activeTab === tab.value
+              ? 'text-white border-b-2 border-orange-400'
+              : 'text-gray-500 hover:text-gray-300',
+          ]"
+          @click="store.activeTab = tab.value"
+        >{{ tab.label }}</button>
+      </div>
 
-    <!-- ── Tab：強勢 / 弱勢 / 全部（僅盤中顯示） ─────────────── -->
-    <div v-if="isOpen" class="flex bg-slate-800 border-b border-slate-700">
-      <button
-        v-for="tab in tabs"
-        :key="tab.value"
-        :class="[
-          'flex-1 py-2 text-sm font-medium transition-colors',
-          store.activeTab === tab.value
-            ? 'text-white border-b-2 border-blue-500'
-            : 'text-slate-400 hover:text-slate-200',
-        ]"
-        @click="store.activeTab = tab.value"
+      <!-- 連次門檻（僅盤中、且非「全部/推薦」tab 顯示） -->
+      <div
+        v-if="isOpen && store.activeTab !== 'recommended' && store.activeTab !== 'all'"
+        class="flex items-center gap-2 px-3 py-1.5 bg-gray-900 border-b border-gray-800"
       >
-        {{ tab.label }}
-      </button>
-    </div>
-
-    <!-- ── 連次門檻篩選（僅盤中顯示） ───────────────────────── -->
-    <div v-if="isOpen" class="flex items-center gap-2 px-4 py-2 bg-slate-800 border-b border-slate-700">
-      <span class="text-slate-400 text-xs shrink-0">連次門檻</span>
-      <div class="flex gap-1.5">
+        <span class="text-gray-500 text-[11px] shrink-0">連次門檻</span>
         <button
           v-for="t in [2, 3, 5]"
           :key="t"
           :class="[
-            'px-3 py-1 text-xs rounded-full transition-colors font-medium',
-            store.threshold === t
-              ? 'bg-blue-600 text-white'
-              : 'bg-slate-700 text-slate-300 hover:bg-slate-600',
+            'px-2.5 py-0.5 text-[11px] rounded-full transition-colors font-medium',
+            store.threshold === t ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300',
           ]"
           @click="store.threshold = t"
-        >
-          {{ t }}次
-        </button>
+        >{{ t }}次</button>
       </div>
+
+      <!-- 欄位標題列（可點擊排序） -->
+      <div v-if="!store.isLoading" class="flex items-center px-2 py-1 bg-gray-900 border-b border-gray-800 text-[10px] text-gray-500">
+        <div class="w-3 shrink-0"></div>
+        <div class="w-[72px] shrink-0 pl-1">K棒/股票</div>
+        <div
+          class="w-[68px] shrink-0 text-right cursor-pointer"
+          :class="sortHighlight('changePercent')"
+          @click="store.setSort('changePercent')"
+        >成交價<br>漲跌幅{{ sortArrow('changePercent') }}</div>
+        <div class="w-[50px] shrink-0 text-right text-[9px] leading-tight">昨量比<br>昨漲幅</div>
+        <div
+          class="w-[52px] shrink-0 text-center cursor-pointer leading-tight"
+          @click="onSortTicksVol"
+        >
+          <span :class="sortHighlight('consecutiveTicks')">連次{{ sortArrow('consecutiveTicks') }}</span>
+          <span class="text-gray-700 mx-0.5">/</span>
+          <span :class="sortHighlight('consecutiveVolume')">連量{{ sortArrow('consecutiveVolume') }}</span>
+        </div>
+        <div
+          class="w-[46px] shrink-0 text-right cursor-pointer leading-tight"
+          :class="sortHighlight('turnoverRate')"
+          @click="store.setSort('turnoverRate')"
+        >週轉率<br>{{ sortArrow('turnoverRate') }}</div>
+        <div class="flex-1 text-center">走勢</div>
+      </div>
+    </header>
+
+    <!-- ── 收盤 banner ─────────────────────────────────────────── -->
+    <div
+      v-if="!isOpen && !store.isLoading"
+      class="flex items-center gap-2 px-3 py-1.5 bg-gray-800/60 border-b border-gray-700 text-[11px] text-gray-400"
+    >
+      🌙 收盤，顯示最後交易資料（{{ currentList.length }} 檔）
     </div>
 
     <!-- ── 載入中 ─────────────────────────────────────────────── -->
     <div v-if="store.isLoading" class="flex flex-col items-center justify-center py-24 gap-3">
-      <span class="loading loading-spinner loading-md text-blue-400"></span>
-      <p class="text-slate-400 text-sm">載入股票資料中...</p>
+      <div class="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+      <p class="text-gray-400 text-sm">載入股票資料中...</p>
     </div>
 
     <template v-else>
+      <!-- 狀態列 -->
+      <div class="flex justify-between items-center px-3 py-1 text-[11px] text-gray-500 bg-gray-900/40 border-b border-gray-900">
+        <span>
+          <template v-if="store.activeTab === 'recommended'">推薦 <b class="text-orange-400">{{ currentList.length }}</b> 檔</template>
+          <template v-else-if="store.activeTab === 'capitalFocus'">資金焦點 <b class="text-orange-400">{{ currentList.length }}</b> 檔</template>
+          <template v-else-if="store.activeTab === 'highTurnover'">高換手 <b class="text-orange-400">{{ currentList.length }}</b> 檔</template>
+          <template v-else-if="isOpen">訊號 <b class="text-white">{{ currentList.length }}</b> 檔</template>
+          <template v-else>股票 <b class="text-white">{{ currentList.length }}</b> 檔</template>
+        </span>
+        <span v-if="store.scanCount < 3 && isOpen" class="text-yellow-500 animate-pulse">累積資料中…</span>
+        <span v-else>更新 {{ lastUpdateStr }}</span>
+      </div>
 
-      <!-- ════════════════════════════════════════════════════════
-           盤中模式：顯示訊號清單
-           ════════════════════════════════════════════════════════ -->
-      <template v-if="isOpen">
-        <!-- 狀態列 -->
-        <div class="flex justify-between items-center px-4 py-1.5 bg-slate-800/40 text-xs text-slate-400 border-b border-slate-800">
-          <span>訊號 <b class="text-white">{{ store.signals.length }}</b> 檔</span>
-          <span v-if="store.scanCount < 3" class="text-yellow-500 animate-pulse">累積資料中...</span>
-          <span v-else>更新 {{ lastUpdateStr }}</span>
-        </div>
-
-        <!-- 訊號清單 -->
-        <TransitionGroup name="list" tag="div" class="divide-y divide-slate-800">
-          <div
-            v-for="stock in store.signals"
-            :key="stock.id"
-            :class="[
-              'px-4 py-3 transition-all',
-              stock.isNew
-                ? 'bg-amber-950/40 border-l-4 border-amber-400'
-                : 'bg-slate-900 border-l-4 border-transparent',
-            ]"
-          >
-            <StockRow :stock="stock" @toggle-watchlist="toggleWatchlist" :in-watchlist="watchlist.has(stock.id)" />
+      <!-- 股票列表 -->
+      <TransitionGroup name="list" tag="div" class="divide-y divide-gray-800/60">
+        <div
+          v-for="stock in currentList"
+          :key="stock.id"
+          :class="[
+            'flex items-center px-2 py-2 transition-all',
+            stock.isNew ? 'bg-amber-950/30 border-l-2 border-amber-400' : 'border-l-2 border-transparent',
+            store.activeTab === 'recommended' ? 'bg-orange-950/10' : '',
+          ]"
+        >
+          <!-- K棒 -->
+          <div class="w-3 shrink-0 mr-1">
+            <svg width="10" height="28" viewBox="0 0 10 28">
+              <!-- wick -->
+              <line x1="5" y1="0" x2="5" y2="28" :stroke="stock.changePercent >= 0 ? '#f87171' : '#4ade80'" stroke-width="1" opacity="0.4"/>
+              <!-- body -->
+              <rect
+                x="1"
+                :y="kBarY(stock)"
+                width="8"
+                :height="kBarH(stock)"
+                :fill="stock.changePercent >= 0 ? '#ef4444' : '#22c55e'"
+                rx="1"
+              />
+            </svg>
           </div>
-        </TransitionGroup>
 
-        <!-- 空狀態 -->
-        <div v-if="store.signals.length === 0" class="flex flex-col items-center justify-center py-24 gap-3 text-slate-500">
-          <span class="text-5xl">🔍</span>
-          <p class="text-sm">目前無符合條件的股票</p>
-          <p class="text-xs">降低門檻或等待訊號出現</p>
-        </div>
-      </template>
+          <!-- 股票名稱 + 代號 + 收藏 -->
+          <div class="w-[72px] shrink-0 pr-1 min-w-0">
+            <div class="flex items-center gap-0.5">
+              <span class="text-white text-xs font-medium truncate leading-tight">{{ stock.name }}</span>
+              <button
+                :class="['text-[10px] leading-none shrink-0', watchlist.has(stock.id) ? 'text-yellow-400' : 'text-gray-700']"
+                @click.stop="watchlist.has(stock.id) ? watchlist.remove(stock.id) : watchlist.add(stock.id)"
+              >★</button>
+            </div>
+            <div class="text-gray-500 text-[10px] font-mono">{{ stock.id }}</div>
+          </div>
 
-      <!-- ════════════════════════════════════════════════════════
-           收盤模式：顯示全部母池（依昨日量排序）
-           ════════════════════════════════════════════════════════ -->
-      <template v-else>
-        <div class="divide-y divide-slate-800">
-          <div
-            v-for="stock in store.allPoolStocks"
-            :key="stock.id"
-            class="px-4 py-3 bg-slate-900 border-l-4 border-transparent"
-          >
-            <StockRow :stock="stock" @toggle-watchlist="toggleWatchlist" :in-watchlist="watchlist.has(stock.id)" />
+          <!-- 成交價 + 漲跌幅 -->
+          <div class="w-[68px] shrink-0 text-right">
+            <div :class="['font-mono font-bold text-sm leading-tight', changeColor(stock.changePercent)]">
+              {{ fmtPrice(stock.price) }}
+            </div>
+            <div :class="['font-mono text-[11px]', changeColor(stock.changePercent)]">
+              {{ fmtPercent(stock.changePercent) }}
+            </div>
+          </div>
+
+          <!-- 昨量比 + 昨漲幅 -->
+          <div class="w-[50px] shrink-0 text-right">
+            <div :class="['text-[11px] font-medium', ratioColor(stock.volumeVsYesterday)]">
+              {{ fmtRatio(stock.volumeVsYesterday) }}
+            </div>
+            <div :class="['text-[10px]', changeColor(stock.yesterdayChangePercent)]">
+              {{ fmtPercent(stock.yesterdayChangePercent) }}
+            </div>
+          </div>
+
+          <!-- 連次 / 連量 (boxed) -->
+          <div class="w-[52px] shrink-0 flex flex-col items-center">
+            <div
+              :class="[
+                'w-full text-center font-bold text-[11px] leading-tight border rounded-sm px-0.5',
+                stock.consecutiveTicks !== 0
+                  ? (stock.consecutiveTicks > 0 ? 'border-red-500/60 text-red-400 bg-red-950/30' : 'border-green-500/60 text-green-400 bg-green-950/30')
+                  : 'border-gray-700 text-gray-500',
+              ]"
+            >{{ Math.abs(stock.consecutiveTicks) || '—' }}</div>
+            <div class="w-full border-t border-gray-700 my-0.5"></div>
+            <div
+              :class="[
+                'w-full text-center font-bold text-[11px] leading-tight border rounded-sm px-0.5',
+                stock.consecutiveVolume !== 0
+                  ? (stock.consecutiveVolume > 0 ? 'border-orange-500/60 text-orange-400 bg-orange-950/30' : 'border-blue-500/60 text-blue-400 bg-blue-950/30')
+                  : 'border-gray-700 text-gray-500',
+              ]"
+            >{{ fmtConsecVol(stock.consecutiveVolume) }}</div>
+          </div>
+
+          <!-- 週轉率 -->
+          <div class="w-[46px] shrink-0 text-right">
+            <div class="text-[12px] font-medium text-gray-200 leading-tight">
+              {{ stock.turnoverRate > 0 ? stock.turnoverRate.toFixed(1) + '%' : '—' }}
+            </div>
+            <div class="text-[10px] text-gray-500">
+              {{ fmtDeltaVol(stock.lastDeltaVol) }}
+            </div>
+          </div>
+
+          <!-- 即時走勢 sparkline -->
+          <div class="flex-1 flex items-center justify-center">
+            <svg v-if="stock.recentPrices && stock.recentPrices.length >= 2"
+              width="40" height="22" viewBox="0 0 40 22" class="overflow-visible">
+              <polyline
+                :points="sparkline(stock.recentPrices)"
+                fill="none"
+                :stroke="sparkColor(stock)"
+                stroke-width="1.5"
+                stroke-linejoin="round"
+                stroke-linecap="round"
+              />
+            </svg>
+            <span v-else class="text-gray-700 text-[10px]">—</span>
           </div>
         </div>
-      </template>
+      </TransitionGroup>
 
+      <!-- 空狀態 -->
+      <div v-if="currentList.length === 0" class="flex flex-col items-center justify-center py-24 gap-3 text-gray-600">
+        <span class="text-5xl">🔍</span>
+        <p class="text-sm">目前無符合條件的股票</p>
+        <p v-if="store.activeTab !== 'recommended'" class="text-xs">降低門檻或等待訊號出現</p>
+        <p v-else class="text-xs">盤中累積資料後自動顯示推薦</p>
+      </div>
     </template>
 
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, defineComponent, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useScannerStore } from '@/stores/scanner.js'
 import { useWatchlistStore } from '@/stores/watchlist.js'
 import { getMarketStatus, isMarketOpen } from '@/composables/useMarketHours.js'
 import {
-  fmtPrice, fmtPercent, fmtRatio, fmtTurnover, fmtTick, fmtVol, fmtDeltaVol,
-  changeColor, tickColor, volColor, ratioColor,
+  fmtPrice, fmtPercent, fmtRatio, fmtDeltaVol, fmtConsecVol,
+  changeColor, ratioColor,
 } from '@/utils/formatters.js'
 
 const store     = useScannerStore()
 const watchlist = useWatchlistStore()
 
 const tabs = [
-  { value: 'strong', label: '強勢股 🔴' },
-  { value: 'weak',   label: '弱勢股 🟢' },
-  { value: 'all',    label: '全部'       },
+  { value: 'strong',       label: '強勢 🔴' },
+  { value: 'weak',         label: '弱勢 🟢' },
+  { value: 'capitalFocus', label: '資金焦點 🟠' },
+  { value: 'highTurnover', label: '高換手 ⚡' },
+  { value: 'recommended',  label: '推薦 ⭐' },
+  { value: 'all',          label: '全部' },
 ]
 
 // ── 時鐘 & 市場狀態 ────────────────────────────────────────────
@@ -159,8 +262,14 @@ onMounted(() => {
   clockTimer = setInterval(updateClock, 1000)
   if (!store.isInitialized) store.init()
 })
-
 onUnmounted(() => clearInterval(clockTimer))
+
+// ── 目前顯示清單 ───────────────────────────────────────────────
+const currentList = computed(() => {
+  if (store.activeTab === 'recommended') return store.recommended
+  if (!isOpen.value) return store.allPoolStocks  // 收盤後固定顯示全部
+  return store.signals
+})
 
 // ── 最後更新時間 ───────────────────────────────────────────────
 const lastUpdateStr = computed(() => {
@@ -168,73 +277,57 @@ const lastUpdateStr = computed(() => {
   return store.lastUpdate.toLocaleTimeString('zh-TW', { hour12: false })
 })
 
-// ── 自選股切換 ─────────────────────────────────────────────────
-function toggleWatchlist(id) {
-  watchlist.has(id) ? watchlist.remove(id) : watchlist.add(id)
+// ── 排序輔助 ───────────────────────────────────────────────────
+function sortHighlight(field) {
+  return store.sortField === field ? 'text-orange-400' : ''
+}
+function sortArrow(field) {
+  if (store.sortField !== field) return ''
+  return store.sortAsc ? '↑' : '↓'
+}
+// 點連次/連量欄：交替切換兩個 field
+function onSortTicksVol() {
+  if (store.sortField === 'consecutiveTicks') {
+    store.setSort('consecutiveVolume')
+  } else {
+    store.setSort('consecutiveTicks')
+  }
 }
 
-// ── 股票列元件（抽出避免重複 template 邏輯）────────────────────
-const StockRow = defineComponent({
-  props: {
-    stock:         { type: Object,  required: true },
-    inWatchlist:   { type: Boolean, default: false },
-  },
-  emits: ['toggle-watchlist'],
-  setup(props, { emit }) {
-    return () => {
-      const s = props.stock
+// ── K棒 ────────────────────────────────────────────────────────
+function kBarH(s) {
+  const pct = Math.abs(s.changePercent || 0)
+  return Math.min(20, Math.max(3, pct * 3))
+}
+function kBarY(s) {
+  const h = kBarH(s)
+  const isUp = (s.changePercent || 0) >= 0
+  return isUp ? (14 - h) : 14
+}
 
-      const row1 = h('div', { class: 'flex items-center justify-between mb-1.5' }, [
-        h('div', { class: 'flex items-center gap-2 min-w-0' }, [
-          s.isNew
-            ? h('span', { class: 'text-amber-400 text-xs font-bold animate-flash shrink-0' }, '⚡')
-            : null,
-          h('span', { class: 'text-white font-mono font-bold text-sm shrink-0' }, s.id),
-          h('span', { class: 'text-slate-300 text-sm truncate' }, s.name),
-        ]),
-        h('div', { class: 'flex items-center gap-2 shrink-0 ml-2' }, [
-          h('span', { class: `font-mono font-bold text-sm ${changeColor(s.changePercent)}` },
-            fmtPrice(s.price)),
-          h('span', { class: `font-mono text-xs font-medium ${changeColor(s.changePercent)}` },
-            fmtPercent(s.changePercent)),
-          h('button', {
-            class: `text-base leading-none transition-colors ${props.inWatchlist ? 'text-yellow-400' : 'text-slate-600'}`,
-            onClick: () => emit('toggle-watchlist', s.id),
-          }, '★'),
-        ]),
-      ])
-
-      const row2 = h('div', { class: 'flex flex-wrap items-center gap-x-3 gap-y-1 text-xs' }, [
-        h('span', { class: `font-bold ${tickColor(s.consecutiveTicks)}` },
-          fmtTick(s.consecutiveTicks)),
-        h('span', { class: `font-bold ${volColor(s.consecutiveVolume)}` },
-          fmtVol(s.consecutiveVolume)),
-        h('span', { class: 'text-slate-400' }, [
-          '每筆 ',
-          h('b', { class: 'text-white' }, fmtDeltaVol(s.lastDeltaVol)),
-        ]),
-        h('span', { class: 'text-slate-400' }, [
-          '週轉 ',
-          h('b', { class: 'text-slate-200' }, fmtTurnover(s.turnoverRate)),
-        ]),
-        h('span', { class: ratioColor(s.volumeVsYesterday) }, [
-          '昨量 ',
-          h('b', {}, fmtRatio(s.volumeVsYesterday)),
-        ]),
-        h('span', { class: changeColor(s.yesterdayChangePercent) },
-          `昨漲 ${fmtPercent(s.yesterdayChangePercent)}`),
-      ])
-
-      return h('div', {}, [row1, row2])
-    }
-  },
-})
+// ── Sparkline ──────────────────────────────────────────────────
+function sparkline(prices) {
+  const w = 40, h = 20
+  const min = Math.min(...prices)
+  const max = Math.max(...prices)
+  const range = max - min || 1
+  return prices.map((p, i) => {
+    const x = (i / (prices.length - 1)) * w
+    const y = h - ((p - min) / range) * h
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+}
+function sparkColor(s) {
+  const prices = s.recentPrices || []
+  if (prices.length < 2) return '#6b7280'
+  return prices[prices.length - 1] >= prices[0] ? '#f87171' : '#4ade80'
+}
 </script>
 
 <style scoped>
-.list-move         { transition: transform 0.4s ease; }
-.list-enter-active { transition: opacity 0.3s ease, transform 0.3s ease; }
+.list-move         { transition: transform 0.35s ease; }
+.list-enter-active { transition: opacity 0.25s ease, transform 0.25s ease; }
 .list-leave-active { transition: opacity 0.2s ease; position: absolute; width: 100%; }
-.list-enter-from   { opacity: 0; transform: translateX(-16px); }
+.list-enter-from   { opacity: 0; transform: translateX(-12px); }
 .list-leave-to     { opacity: 0; }
 </style>
