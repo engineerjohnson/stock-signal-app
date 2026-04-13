@@ -61,18 +61,44 @@ export async function fetchStockPool() {
   const todayParam = new Date().toISOString().slice(0, 10).replace(/-/g, '')  // YYYYMMDD
   const wwwPath = `/rwd/zh/afterTrading/STOCK_DAY_ALL?date=${todayParam}&response=json`
 
-  // DEV: axios 返回 { data: {...} }，需要 .data 解包
-  // PROD: proxyGet 已返回解析後 JSON，不需再解包
-  const rawResp = import.meta.env.DEV
-    ? await axios.get(`${TWSE_WWW}${wwwPath}`, { timeout: 15000 }).then(r => r?.data ?? r)
-    : await proxyGet(`${_TWSE}${wwwPath}`)
+  // www 端點有兩個問題：
+  //   1. 盤中請求 date=今日時，當日 STOCK_DAY_ALL 尚未釋出 → 307 redirect
+  //   2. Vite proxy 不帶完整 Browser header（Cookie / Referer）→ 被 WAF 攔截 → 307 → 封鎖頁
+  // openapi 端點不帶 date 參數，直接回傳最近一次已有資料（如盤中回傳前一交易日），無上述問題。
+  //
+  // DEV：直接走 openapi，跳過 www（避免 Vite proxy 觸發 WAF）
+  // PROD：先試 www（Cloudflare Worker 有完整 header，可取到最即時資料），307 / 失敗再 fallback openapi
+  let rawResp = null
+
+  if (!import.meta.env.DEV) {
+    // PROD：先試 www，失敗再 fallback
+    try {
+      rawResp = await proxyGet(`${_TWSE}${wwwPath}`)
+    } catch (e) {
+      console.warn('[TWSE] PROD www endpoint 失敗，fallback 到 openapi', e?.message ?? e)
+    }
+  }
+
+  // DEV 直接走 openapi；PROD www 307 / 失敗或回應非 OK 也走 openapi
+  const wwwOk = rawResp?.stat === 'OK' && Array.isArray(rawResp.data)
+  if (!wwwOk && !Array.isArray(rawResp)) {
+    try {
+      const fallback = import.meta.env.DEV
+        ? await axios.get(`${OPENAPI}/exchangeReport/STOCK_DAY_ALL`, { timeout: 15000 }).then(r => r?.data ?? r)
+        : await proxyGet(`${_OPENAPI}/exchangeReport/STOCK_DAY_ALL`)
+      rawResp = fallback
+    } catch (e) {
+      console.warn('[TWSE] openapi fallback 失敗', e?.message ?? e)
+      rawResp = []
+    }
+  }
 
   // www endpoint 回傳格式：{ stat, date, fields, data: [...rows] }
   // 每筆 data 是 array，欄位對應 fields
   // 相容 openapi 格式（直接是 array of objects）
   let dayAllData
   if (Array.isArray(rawResp)) {
-    dayAllData = rawResp   // openapi 格式（fallback）
+    dayAllData = rawResp   // openapi 格式
   } else if (rawResp?.stat === 'OK' && Array.isArray(rawResp.data)) {
     const fields = rawResp.fields || []
     const idx = name => fields.indexOf(name)
@@ -94,12 +120,7 @@ export async function fetchStockPool() {
       Transaction:  row[iTxn],
     }))
   } else {
-    // 非交易日或資料未公佈 → fallback 到 openapi
-    console.warn('[TWSE] www endpoint 無資料，fallback 到 openapi')
-    const fallback = import.meta.env.DEV
-      ? await axios.get(`${OPENAPI}/exchangeReport/STOCK_DAY_ALL`, { timeout: 15000 }).then(r => r?.data ?? r)
-      : await proxyGet(`${_OPENAPI}/exchangeReport/STOCK_DAY_ALL`)
-    dayAllData = Array.isArray(fallback) ? fallback : []
+    dayAllData = []
   }
 
   const allStocks = (dayAllData || [])

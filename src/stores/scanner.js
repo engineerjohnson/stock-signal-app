@@ -1,7 +1,20 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { fetchStockPool, fetchBatchQuotes, lookupStockBase, fetchDailyHistory, fetchSharesOutstanding } from '@/services/twse.js'
-import { calcConsecutiveTicks, calcConsecutiveVolume, isStrong, isWeak, isVolumeUp, isVolumeDown, isCapitalFocus, isHighTurnover, isNearLimitUp, isNearLimitDown, isLongCandidate, isShortCandidate, isWarrantLong, isInstBuy, isInstBuyUp, isSurging, isCapitalAttention, isHighTurnoverRisk } from '@/utils/indicators.js'
+import { hasFugleApiKey, fetchIntradayTrades, fetchIntradayCandles } from '@/services/fugle.js'
+import {
+  calcMA20, calcBollinger, calcMA20Slope,
+  calcConsecutiveTicks, calcConsecutiveVolume,
+  isStrong, isWeak,
+  isVolumeUp, isVolumeDown,
+  isCapitalFocus, isHighTurnover,
+  isNearLimitUp, isNearLimitDown,
+  isLongCandidate, isShortCandidate,
+  isWarrantLong, isWarrantShort,
+  isInstBuy, isInstBuyUp, isInstSell,
+  isSurging, isBollingerLong, isBollingerWeak,
+  isCapitalAttention, isHighTurnoverRisk,
+} from '@/utils/indicators.js'
 import { isMarketOpen, getVolumeTimeFactor } from '@/composables/useMarketHours.js'
 
 const QUOTES_STORAGE_KEY = 'scanner_quotes_v2'
@@ -30,11 +43,12 @@ export const useScannerStore = defineStore('scanner', () => {
   const quotes      = ref({})      // 即時報價快取 { '2330': StockData }
   const threshold   = ref(3)       // 連次觸發門檻（2 / 3 / 5）
   const activeTab   = ref('all') // 預設「全部」，確保初次/盤後開啟一定看得到資料
-  const isLoading   = ref(false)
-  const isInitialized = ref(false)
-  const lastUpdate  = ref(null)
-  const dataDate    = ref(null)    // STOCK_DAY_ALL 資料日期（例如 '2026/04/09'）
-  const scanCount   = ref(0)       // 已完成掃描次數（前幾次資料不足）
+  const isLoading       = ref(false)
+  const isInitialized   = ref(false)
+  const lastUpdate      = ref(null)
+  const dataDate        = ref(null)    // STOCK_DAY_ALL 資料日期（例如 '2026/04/09'）
+  const scanCount       = ref(0)       // 已完成掃描次數（前幾次資料不足）
+  const fugleProgress   = ref(null)    // null=未開始, '0/100'=載入中, 'done'=完成
 
   // 排序狀態
   // field: 'consecutiveVolume' | 'consecutiveTicks' | 'changePercent' | 'turnoverRate' | 'volumeVsYesterday' | 'volume'
@@ -42,6 +56,7 @@ export const useScannerStore = defineStore('scanner', () => {
   const sortAsc       = ref(false)   // false = 高→低（預設降序）
 
   // tick 歷史不需響應式，只用於計算
+  // { prices[], volumes[], timestamps[], lastVol, lastDelta }
   const tickHistories = {}
 
   let scanTimer  = null
@@ -75,28 +90,50 @@ export const useScannerStore = defineStore('scanner', () => {
     }
   }
 
+  // ── Computed：連量市場前30%分位門檻 ─────────────────────────────
+  // 動態計算，讓權證做多/做空的「連量前30%」條件自適應當日市況
+  // 取有連量的股票依絕對值排序，取第 70 百分位數（即 top 30% 的入口值）
+  const connVolumeThreshold = computed(() => {
+    const vols = Object.values(quotes.value)
+      .map(s => Math.abs(s.consecutiveVolume))
+      .filter(v => v > 0)
+      .sort((a, b) => a - b)
+    if (vols.length < 5) return 300   // 資料不足時用固定門檻 300 張
+    const idx70 = Math.floor(vols.length * 0.7)
+    return vols[idx70] || 300
+  })
+
   // ── Computed：盤中訊號清單 ────────────────────────────────────
   const signals = computed(() => {
-    const all = Object.values(quotes.value)
+    const all  = Object.values(quotes.value)
+    const cvt  = connVolumeThreshold.value   // 連量市場前30%門檻
 
     let filtered
     switch (activeTab.value) {
+      // ── 基礎 ──────────────────────────────────────────────────
       case 'strong':       filtered = all.filter(s => isStrong(s, threshold.value));       break
       case 'weak':         filtered = all.filter(s => isWeak(s, threshold.value));         break
       case 'volumeUp':     filtered = all.filter(s => isVolumeUp(s));                      break
       case 'volumeDown':   filtered = all.filter(s => isVolumeDown(s));                    break
-      case 'capitalFocus': filtered = all.filter(s => isCapitalFocus(s, threshold.value)); break
       case 'highTurnover': filtered = all.filter(s => isHighTurnover(s));                  break
-      case 'longCandidate':      filtered = all.filter(s => isLongCandidate(s));      break
-      case 'shortCandidate':     filtered = all.filter(s => isShortCandidate(s));     break
-      case 'warrantLong':        filtered = all.filter(s => isWarrantLong(s));        break
-      case 'instBuy':            filtered = all.filter(s => isInstBuy(s));            break
-      case 'instBuyUp':          filtered = all.filter(s => isInstBuyUp(s));          break
-      case 'surging':            filtered = all.filter(s => isSurging(s));            break
-      case 'capitalAttention':   filtered = all.filter(s => isCapitalAttention(s));   break
-      case 'highTurnoverRisk':   filtered = all.filter(s => isHighTurnoverRisk(s));   break
+      case 'longCandidate':  filtered = all.filter(s => isLongCandidate(s));               break
+      case 'shortCandidate': filtered = all.filter(s => isShortCandidate(s));              break
       case 'limitUp':      filtered = all.filter(s => isNearLimitUp(s));                   break
       case 'limitDown':    filtered = all.filter(s => isNearLimitDown(s));                 break
+      // ── Tab 1 強勢 ────────────────────────────────────────────
+      case 'warrantLong':      filtered = all.filter(s => isWarrantLong(s, cvt));          break
+      case 'instBuy':          filtered = all.filter(s => isInstBuy(s));                   break
+      case 'instBuyUp':        filtered = all.filter(s => isInstBuyUp(s));                 break
+      case 'surging':          filtered = all.filter(s => isSurging(s));                   break
+      case 'bollingerLong':    filtered = all.filter(s => isBollingerLong(s));             break
+      // ── Tab 2 弱勢 ────────────────────────────────────────────
+      case 'warrantShort':     filtered = all.filter(s => isWarrantShort(s, cvt));         break
+      case 'instSell':         filtered = all.filter(s => isInstSell(s));                  break
+      case 'bollingerWeak':    filtered = all.filter(s => isBollingerWeak(s));             break
+      // ── Tab 3 週轉率 ──────────────────────────────────────────
+      case 'highTurnoverRisk': filtered = all.filter(s => isHighTurnoverRisk(s));          break
+      case 'capitalFocus':     filtered = all.filter(s => isCapitalFocus(s));              break
+      case 'capitalAttention': filtered = all.filter(s => isCapitalAttention(s));          break
       default:             filtered = all  // 'all'：不篩選
     }
 
@@ -157,7 +194,7 @@ export const useScannerStore = defineStore('scanner', () => {
       const newQuotes = {}
       for (const s of stocks) {
         newQuotes[s.id] = buildInitialQuote(s)
-        tickHistories[s.id] = { prices: [], volumes: [], lastVol: 0, lastDelta: 0 }
+        tickHistories[s.id] = { prices: [], volumes: [], timestamps: [], lastVol: 0, lastDelta: 0 }
       }
 
       // 不論盤中或盤後，都嘗試讀取 localStorage 快照
@@ -259,62 +296,175 @@ export const useScannerStore = defineStore('scanner', () => {
       recentPrices:      [],
       // 盤後初始值：用昨日資料填充，盤中會被即時 API 覆蓋
       changePercent:     base.yesterdayChangePercent || 0,
-      volume:            base.yesterdayVolume || 0,   // 讓成交量欄位顯示昨日量
+      volume:            base.yesterdayVolume || 0,
       lastDeltaVol:      0,
       consecutiveTicks:  0,
       consecutiveVolume: 0,
       // 初始周轉率：若已有 sharesLots，用昨日量計算；盤中會被即時量覆蓋
       turnoverRate:      sharesLots > 0 ? (base.yesterdayVolume / sharesLots) * 100 : 0,
-      // dayVolumeRatio：跨日靜態量比（昨日量/前日量），盤後有參考值；盤中被即時值覆蓋
+      // dayVolumeRatio：跨日靜態量比（昨日量/前日量）
       volumeVsYesterday: base.dayVolumeRatio || 0,
-      isNew:             false,
+      // ── 技術指標（盤後日K補充後填入，未補充前為 null）──────────
+      ma20:      null,   // 20日移動平均
+      ma20Slope: null,   // 月線斜率（今日MA20 − 5日前MA20）
+      boll:      null,   // 布林通道 { upper, middle, lower, std, width }
+      isNew:     false,
     }
   }
 
-  // ── 盤後日K補充（連次/量比） ─────────────────────────────────
+  // ── 盤後補充（連次/量比） ────────────────────────────────────
   /**
-   * 盤後：平行呼叫 STOCK_DAY API 取本月每日收盤資料。
-   * 利用日K計算：
-   *   - consecutiveTicks：連日漲跌次數（用於強勢/弱勢/做多/做空等 tab）
-   *   - volumeVsYesterday：昨日量 / 前日量（用於量增/換手 tab）
+   * 盤後補充 consecutiveTicks / consecutiveVolume / volumeVsYesterday。
    *
-   * 注意：consecutiveVolume 日K版本無意義（量級差100x），保留為 0。
+   * 有 Fugle API Key → 取今日 1 分K，算真實連次/連量（最準確）
+   * 無 Fugle API Key → fallback：取 TWSE STOCK_DAY 月K，算連日漲跌（_dailyMode）
+   *
    * 若已有今日盤中 localStorage 快照，此函式不會被呼叫（見 init()）。
    */
   async function loadAfterHoursHistory() {
-    // 使用已快取的掃描ID（量前100 + 自選股），避免重新排序整個pool
-    const ids = _scanIds.length
-      ? _scanIds
-      : [...pool.value].sort((a, b) => b.yesterdayVolume - a.yesterdayVolume).slice(0, 100).map(s => s.id)
-    if (!ids.length) return
+    if (!pool.value.length) return
 
-    // 並行取日K，失敗單股不影響其他
-    const results = await Promise.allSettled(ids.map(id => fetchDailyHistory(id)))
+    // 量前100 + 近漲跌停（合併為 Fugle / TWSE 月K 的精準處理清單）
+    const top100Set = new Set(
+      (_scanIds.length
+        ? _scanIds
+        : [...pool.value].sort((a, b) => b.yesterdayVolume - a.yesterdayVolume).slice(0, 100).map(s => s.id)
+      )
+    )
+    pool.value
+      .filter(s => Math.abs(s.yesterdayChangePercent) >= 9)
+      .forEach(s => top100Set.add(s.id))
+    const priorityIds = [...top100Set]   // ~100~150 支
 
-    for (const r of results) {
-      if (r.status !== 'fulfilled') continue
-      const { id, days } = r.value
-      if (!quotes.value[id] || days.length < 2) continue
+    // 第一段：對全部 pool 套用「今日方向」快速估算
+    // 不需額外 API：用 STOCK_DAY_ALL 已有的 yesterdayChangePercent 推算最少連次方向
+    // 讓 limitUp/limitDown/volumeUp 等不需連次的 tab 可完整顯示
+    _applyDayDirectionEstimate()
 
-      const prices = days.map(d => d.close)
-      const consecutiveTicks = calcConsecutiveTicks(prices)
+    // 第二段：TWSE 月K 精準補充（量前100 + 漲跌停，約130支，小批次避免封鎖）
+    await _loadTwseDailyHistory(priorityIds)
 
-      // 昨日量 / 前日量（最後兩個交易日）
-      const lastVol = days[days.length - 1].volume
-      const prevVol = days[days.length - 2].volume
-      const volumeVsYesterday = prevVol > 0 ? lastVol / prevVol : 0
+    // 第三段：有 Fugle Key 時，用逐筆/分K 精準覆蓋
+    if (hasFugleApiKey()) {
+      await _loadFugleCandles(priorityIds)
+    }
+  }
+
+  /**
+   * Fugle 路徑：每支股票先試逐筆成交，失敗再試 1分K。
+   * 不做整批偵測，避免 probe timeout 造成長時間卡頓。
+   * 序列請求，每3支暫停3秒（≈60 req/min 免費方案）。
+   * fugleProgress 即時回報載入進度，供 UI 顯示。
+   */
+  async function _loadFugleCandles(ids) {
+    const delay = ms => new Promise(r => setTimeout(r, ms))
+    let loaded = 0
+    let allFailed = true   // 若全部失敗則改用 TWSE 日K
+    fugleProgress.value = `0 / ${ids.length}`
+
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i]
+      if (!quotes.value[id]) { fugleProgress.value = `${i + 1} / ${ids.length}`; continue }
+
+      // 先試逐筆，失敗再試 1分K（兩者都有 timeout，不會無限等待）
+      let data = await fetchIntradayTrades(id)
+      if (!data || data.prices.length < 2) data = await fetchIntradayCandles(id)
+
+      if (data && data.prices.length >= 2) {
+        allFailed = false
+        quotes.value[id] = {
+          ...quotes.value[id],
+          consecutiveTicks:  calcConsecutiveTicks(data.prices),
+          // 傳入 timestamps（逐筆有時）→ 30 秒滾動視窗；candle fallback → null → 連次期間累積
+          consecutiveVolume: calcConsecutiveVolume(data.prices, data.volumes, data.timestamps ?? null),
+        }
+        loaded++
+      }
+
+      fugleProgress.value = `${i + 1} / ${ids.length}`
+
+      // 每 3 次請求暫停 3 秒（速率限制）
+      if ((i + 1) % 3 === 0 && i < ids.length - 1) await delay(3000)
+    }
+
+    fugleProgress.value = 'done'
+
+    // 全部失敗（非交易日 / 金鑰無效）→ fallback 到 TWSE 日K
+    if (allFailed) {
+      console.info('[Scanner] Fugle 全部無資料，改用 TWSE 日K')
+      fugleProgress.value = null
+      return _loadTwseDailyHistory(ids)
+    }
+
+    lastUpdate.value = new Date()
+    saveQuotes(quotes.value)
+    console.info(`[Scanner] Fugle 補充完成 ${loaded}/${ids.length}`)
+  }
+
+  /**
+   * 快速方向估算（無 API）：用 STOCK_DAY_ALL 的今日漲跌幅設定初始連次方向。
+   * 讓 limitUp/limitDown/volumeUp 等 tab 盤後能顯示全部母池股票。
+   * 此值會被後續 TWSE 月K 和 Fugle 精準數據覆蓋。
+   */
+  function _applyDayDirectionEstimate() {
+    for (const id of Object.keys(quotes.value)) {
+      const q = quotes.value[id]
+      if (q.consecutiveTicks !== 0) continue  // 已有連次（從 localStorage 恢復），不覆蓋
+
+      const dir = q.changePercent > 0 ? 1 : q.changePercent < 0 ? -1 : 0
+      if (dir === 0) continue
 
       quotes.value[id] = {
-        ...quotes.value[id],
-        consecutiveTicks,
-        volumeVsYesterday,
-        _dailyMode: true,   // 標記為日K模式，讓 UI 可顯示提示
+        ...q,
+        consecutiveTicks: dir,
+        _dailyMode: true,  // 標記為日K估算模式，讓需要連量條件的 tab 略過連量
+      }
+    }
+    console.info('[Scanner] 快速方向估算完成')
+  }
+
+  /**
+   * TWSE 月K：批次並行（每批20支），覆蓋全部 pool 股票。
+   * 設定 _dailyMode=true，UI 顯示「📊 日K連次」。
+   * 若有 Fugle Key，此函式跑完後 _loadFugleCandles 會覆蓋量前100的值。
+   */
+  async function _loadTwseDailyHistory(ids) {
+    const BATCH = 20
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const batch = ids.slice(i, i + BATCH)
+      const results = await Promise.allSettled(batch.map(id => fetchDailyHistory(id)))
+
+      for (const r of results) {
+        if (r.status !== 'fulfilled') continue
+        const { id, days } = r.value
+        if (!quotes.value[id] || days.length < 2) continue
+
+        const closes = days.map(d => d.close)
+        const consecutiveTicks  = calcConsecutiveTicks(closes)
+        const lastVol = days[days.length - 1].volume
+        const prevVol = days[days.length - 2].volume
+        const volumeVsYesterday = prevVol > 0 ? lastVol / prevVol : 0
+
+        // 技術指標（需20筆才能算MA20，需25筆才能算斜率）
+        const ma20      = calcMA20(closes)
+        const boll      = calcBollinger(closes)
+        const ma20Slope = calcMA20Slope(closes)  // closes.length < 25 時回傳 null
+
+        quotes.value[id] = {
+          ...quotes.value[id],
+          consecutiveTicks,
+          volumeVsYesterday,
+          ma20,
+          boll,
+          ma20Slope,
+          _dailyMode: true,
+        }
       }
     }
 
     lastUpdate.value = new Date()
-    saveQuotes(quotes.value)   // 持久化日K資料，避免刷新頁面重新請求100支API
-    console.info('[Scanner] 盤後日K補充完成，使用連日漲跌作為連次')
+    saveQuotes(quotes.value)
+    console.info(`[Scanner] TWSE 日K補充完成（${ids.length} 支）`)
   }
 
   // ── 輪詢控制 ──────────────────────────────────────────────────
@@ -406,10 +556,12 @@ export const useScannerStore = defineStore('scanner', () => {
       if (history.prices.length >= 500) {
         history.prices.shift()
         history.volumes.shift()
+        if (history.timestamps.length) history.timestamps.shift()
       }
       history.prices.push(price)
       history.volumes.push(delta)
-      history.lastDelta = delta   // 記錄最新一筆 tick 量（張）
+      history.timestamps.push(Date.now())  // TWSE MIS 無逐筆時間，用接收時刻近似
+      history.lastDelta = delta
 
       history.lastVol = totalVol
     } else if (history.prices.length === 0 && price > 0) {
@@ -441,9 +593,9 @@ export const useScannerStore = defineStore('scanner', () => {
       ? calcConsecutiveTicks(history.prices)
       : (base.consecutiveTicks ?? 0)
 
-    // 連量 = 連次方向上的「累積成交張數」（需同時傳入 prices 和 volumes）
+    // 連量：傳入 timestamps → 30 秒滾動視窗（TWSE MIS 以接收時刻近似）
     const consecutiveVolume = history.prices.length > 1 && history.volumes.length > 0
-      ? calcConsecutiveVolume(history.prices, history.volumes)
+      ? calcConsecutiveVolume(history.prices, history.volumes, history.timestamps)
       : (base.consecutiveVolume ?? 0)
 
     // lastDeltaVol：有新成交就用新值，否則保留舊值
@@ -497,7 +649,7 @@ export const useScannerStore = defineStore('scanner', () => {
 
     quotes.value[stockId] = buildInitialQuote(base)
     pool.value = [...pool.value, base]
-    tickHistories[stockId] = { prices: [], volumes: [], lastVol: 0, lastDelta: 0 }
+    tickHistories[stockId] = { prices: [], volumes: [], timestamps: [], lastVol: 0, lastDelta: 0 }
 
     // 自選股一律加入掃描 ID 清單，確保盤中能取得即時 MIS 資料
     if (!_scanIds.includes(stockId)) _scanIds.push(stockId)
@@ -521,6 +673,7 @@ export const useScannerStore = defineStore('scanner', () => {
     allPoolStocks,
     recommended,
     isDailyMode,
+    connVolumeThreshold,
     threshold,
     activeTab,
     sortField,
@@ -532,6 +685,7 @@ export const useScannerStore = defineStore('scanner', () => {
     lastUpdate,
     dataDate,
     scanCount,
+    fugleProgress,
     init,
     startScan,
     stopScan,

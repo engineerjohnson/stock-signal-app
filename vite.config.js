@@ -36,6 +36,12 @@ export default defineConfig(({ mode }) => {
           secure: false,
           rewrite: path => path.replace(/^\/api\/twse-www/, ''),
         },
+        '/api/fugle': {
+          target: 'https://api.fugle.tw',
+          changeOrigin: true,
+          secure: false,
+          rewrite: path => path.replace(/^\/api\/fugle/, '/marketdata/v1.0/stock'),
+        },
       },
     },
 

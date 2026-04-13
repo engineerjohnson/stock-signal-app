@@ -99,9 +99,54 @@
       <span class="text-indigo-500">｜</span>
       <span v-if="store.dataDate" class="text-indigo-400">📅 資料日期 {{ store.dataDate }}</span>
       <span v-else-if="store.lastUpdate" class="text-indigo-400">快照 {{ lastUpdateStr }}</span>
-      <span v-else class="text-indigo-500">顯示昨日收盤數據（量比需曾於盤中開啟過才有值）</span>
-      <span v-if="store.isDailyMode" class="ml-2 text-emerald-400 font-semibold">📊 日K連次</span>
-      <span class="ml-auto text-indigo-600 shrink-0">近漲跌停、量增價漲等 tab 可用</span>
+      <span v-else class="text-indigo-500">顯示昨日收盤數據</span>
+      <template v-if="store.fugleProgress && store.fugleProgress !== 'done'">
+        <span class="ml-1 text-yellow-400 animate-pulse font-semibold">⏳ Fugle {{ store.fugleProgress }}</span>
+      </template>
+      <template v-else>
+        <span v-if="fugleKeySet" class="ml-1 text-green-400 font-semibold">✓ Fugle 連次</span>
+        <span v-else-if="store.isDailyMode" class="ml-1 text-emerald-400 font-semibold">📊 日K連次</span>
+      </template>
+      <button
+        @click="showFugleSettings = !showFugleSettings"
+        class="ml-auto text-indigo-500 hover:text-indigo-300 shrink-0 px-1"
+        title="設定 Fugle API Key"
+      >⚙</button>
+    </div>
+
+    <!-- ── Fugle API Key 設定列 ────────────────────────────────── -->
+    <div
+      v-if="!isOpen && !store.isLoading && showFugleSettings"
+      class="flex flex-col gap-2 px-3 py-2 bg-indigo-950/40 border-b border-indigo-800/40 text-[11px]"
+    >
+      <!-- API Key 列 -->
+      <div class="flex items-center gap-2">
+        <span class="text-indigo-400 shrink-0">🔑 Fugle Key</span>
+        <input
+          v-model="fugleKeyInput"
+          type="password"
+          placeholder="貼上 Fugle API Key（免費方案即可）"
+          class="flex-1 bg-gray-800 text-gray-200 text-[11px] px-2 py-1 rounded border border-gray-700 focus:outline-none focus:border-indigo-500 min-w-0"
+          @keyup.enter="saveFugleKey"
+        />
+        <button
+          @click="saveFugleKey"
+          class="shrink-0 px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium"
+        >儲存</button>
+        <button
+          v-if="fugleKeySet"
+          @click="fugleKeyInput = ''; saveFugleKey()"
+          class="shrink-0 px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 text-[11px]"
+        >清除</button>
+      </div>
+      <!-- 重新計算列 -->
+      <div class="flex items-center gap-2 pt-0.5 border-t border-indigo-800/30">
+        <span class="text-indigo-500 flex-1">清除快取，重新從 Fugle 計算連次/連量</span>
+        <button
+          @click="resetAndReload"
+          class="shrink-0 px-2.5 py-1 rounded bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-medium"
+        >🔄 重新計算</button>
+      </div>
     </div>
 
     <!-- ── 載入中 ─────────────────────────────────────────────── -->
@@ -286,6 +331,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useScannerStore } from '@/stores/scanner.js'
 import { useWatchlistStore } from '@/stores/watchlist.js'
 import { getMarketStatus, isMarketOpen } from '@/composables/useMarketHours.js'
+import { getFugleApiKey, setFugleApiKey, hasFugleApiKey } from '@/services/fugle.js'
 import {
   fmtPrice, fmtPercent, fmtRatio, fmtDeltaVol, fmtConsecVol, fmtVolume, fmtTurnover,
   changeColor, ratioColor,
@@ -296,25 +342,33 @@ const watchlist = useWatchlistStore()
 
 // ── Tab 定義（完整仿照當沖飆股神手） ───────────────────────────
 const tabs = [
-  { value: 'strong',           label: '強勢 🔴',      desc: '強勢' },
-  { value: 'weak',             label: '弱勢 🟢',      desc: '弱勢' },
-  { value: 'longCandidate',    label: '做多 📈',      desc: '做多候選' },
-  { value: 'shortCandidate',   label: '做空 📉',      desc: '做空候選' },
-  { value: 'surging',          label: '飆風向上 🌪',   desc: '飆風向上' },
-  { value: 'warrantLong',      label: '權證做多 🎯',   desc: '權證做多' },
-  { value: 'instBuy',          label: '主投買進 💼',   desc: '主投買進' },
-  { value: 'instBuyUp',        label: '主投買沿上 🏔', desc: '主投買沿上' },
-  { value: 'capitalAttention', label: '資金關注焦點 🔍', desc: '資金關注焦點' },
-  { value: 'capitalFocus',     label: '資金焦點 🟠',  desc: '資金焦點' },
-  { value: 'volumeUp',         label: '量增價漲 🔼',  desc: '量增價漲' },
-  { value: 'volumeDown',       label: '縮量上漲 🔽',  desc: '縮量上漲' },
-  { value: 'highTurnover',     label: '大量換手 ⚡',   desc: '大量換手' },
-  { value: 'highTurnoverRisk', label: '換手高危 🚨',   desc: '換手高危' },
-  { value: 'limitUp',          label: '近漲停 🚀',    desc: '近漲停' },
-  { value: 'limitDown',        label: '近跌停 💀',    desc: '近跌停' },
-  { value: 'recommended',      label: '推薦飆股 ⭐',  desc: '推薦飆股' },
-  { value: 'watchlistTab',     label: '自選股 ☆',     desc: '自選股' },
-  { value: 'all',              label: '全部',          desc: '全部' },
+  // ── Tab 1 強勢 ───────────────────────────────────────────────
+  { value: 'warrantLong',      label: '權證做多 🎯',    desc: '權證做多' },
+  { value: 'instBuy',          label: '主投買進 💼',    desc: '主投買進' },
+  { value: 'instBuyUp',        label: '主投買沿上 🏔',  desc: '主投買沿上' },
+  { value: 'surging',          label: '飆風向上 🌪',    desc: '飆風向上' },
+  { value: 'bollingerLong',    label: '布林多味 📊',    desc: '布林多味' },
+  // ── Tab 2 弱勢 ───────────────────────────────────────────────
+  { value: 'warrantShort',     label: '權證做空 🎯📉',  desc: '權證做空' },
+  { value: 'instSell',         label: '主投賣出 💼📉',  desc: '主投賣出' },
+  { value: 'bollingerWeak',    label: '布林下軌 📊📉',  desc: '弱勢沿下軌' },
+  // ── Tab 3 週轉率 ─────────────────────────────────────────────
+  { value: 'highTurnoverRisk', label: '換手高危 🚨',    desc: '換手高危' },
+  { value: 'capitalFocus',     label: '資金焦點 🟠',    desc: '資金關注焦點' },
+  // ── 其他輔助 ────────────────────────────────────────────────
+  { value: 'strong',           label: '強勢 🔴',        desc: '強勢' },
+  { value: 'weak',             label: '弱勢 🟢',        desc: '弱勢' },
+  { value: 'longCandidate',    label: '做多 📈',        desc: '做多候選' },
+  { value: 'shortCandidate',   label: '做空 📉',        desc: '做空候選' },
+  { value: 'capitalAttention', label: '資金關注 🔍',    desc: '資金關注焦點' },
+  { value: 'volumeUp',         label: '量增價漲 🔼',    desc: '量增價漲' },
+  { value: 'volumeDown',       label: '縮量上漲 🔽',    desc: '縮量上漲' },
+  { value: 'highTurnover',     label: '大量換手 ⚡',     desc: '大量換手' },
+  { value: 'limitUp',          label: '近漲停 🚀',      desc: '近漲停' },
+  { value: 'limitDown',        label: '近跌停 💀',      desc: '近跌停' },
+  { value: 'recommended',      label: '推薦飆股 ⭐',    desc: '推薦飆股' },
+  { value: 'watchlistTab',     label: '自選股 ☆',       desc: '自選股' },
+  { value: 'all',              label: '全部',            desc: '全部' },
 ]
 
 // 哪些 tab 需要顯示連次門檻設定
@@ -380,33 +434,68 @@ const isLastUpdateToday = computed(() =>
 // ── 空狀態提示 ─────────────────────────────────────────────────
 const emptyIcon = computed(() => {
   const map = {
+    // Tab 1 強勢
+    warrantLong: '🎯', instBuy: '💼', instBuyUp: '🏔', surging: '🌪', bollingerLong: '📊',
+    // Tab 2 弱勢
+    warrantShort: '🎯', instSell: '💼', bollingerWeak: '📊',
+    // Tab 3 週轉率
+    highTurnoverRisk: '🚨', capitalFocus: '🟠',
+    // 其他
     strong: '🔴', weak: '🟢', longCandidate: '📈', shortCandidate: '📉',
-    surging: '🌪', warrantLong: '🎯', instBuy: '💼', instBuyUp: '🏔',
-    capitalAttention: '🔍', capitalFocus: '🟠',
-    volumeUp: '🔼', volumeDown: '🔽',
-    highTurnover: '⚡', highTurnoverRisk: '🚨',
-    limitUp: '🚀', limitDown: '💀',
-    recommended: '⭐', watchlistTab: '☆', all: '🔍',
+    capitalAttention: '🔍', volumeUp: '🔼', volumeDown: '🔽', highTurnover: '⚡',
+    limitUp: '🚀', limitDown: '💀', recommended: '⭐', watchlistTab: '☆', all: '🔍',
   }
   return map[store.activeTab] || '🔍'
 })
 const emptyMsg = computed(() => {
+  const t   = store.threshold
+  const cvt = store.connVolumeThreshold
   const msgs = {
-    watchlistTab:     '尚未加入自選股，點 ★ 加入',
-    recommended:      '盤中累積資料後自動顯示推薦（需連漲≥2次 + 有連量 + 量比≥1.5x）',
-    limitUp:          '目前無股票接近漲停板 (≥9%)',
-    limitDown:        '目前無股票接近跌停板 (≤-9%)',
-    longCandidate:    '目前無做多候選（漲≥2% + 連漲≥2次 + 量比≥1.5x）',
-    shortCandidate:   '目前無做空候選（跌≥2% + 連跌≥2次 + 量比≥1.5x）',
-    warrantLong:      '目前無適合買認購權證的標的（漲1%~8% + 連漲≥2次 + 量比≥1.3x）',
-    instBuy:          '目前無主投買進特徵（連漲≥2次 + 連量≥200張 + 量比≥1.5x）',
-    instBuyUp:        '目前無主投買沿上特徵（連漲≥5次 + 連量≥200張 + 漲≥1.5%）',
-    surging:          '目前無飆風向上股（漲≥3% + 連漲≥3次 + 量比≥2.5x）',
+    watchlistTab:  '尚未加入自選股，點 ★ 加入',
+    recommended:   '盤中累積資料後自動顯示推薦（連漲≥2次 + 有連量 + 今漲 + 量比≥1.5x）',
+    limitUp:       '目前無股票接近漲停板 (≥9%)',
+    limitDown:     '目前無股票接近跌停板 (≤-9%)',
+    // ── 其他輔助 ─────────────────────────────────────────────────
+    strong:        `目前無強勢股（連漲≥${t}次 + 今日上漲）`,
+    weak:          `目前無弱勢股（連跌≥${t}次 + 今日下跌）`,
+    volumeUp:      '目前無量增價漲（漲≥1% + 量比≥2x）',
+    volumeDown:    '目前無縮量上漲（漲≥1% + 量比0~0.7x + 成交量≥200張）',
+    highTurnover:  '目前無大量換手（量比≥2.5x + 今日上漲）',
+    longCandidate: '目前無做多候選（漲≥2% + 連漲≥2次 + 量比≥1.5x）',
+    shortCandidate:'目前無做空候選（跌≥2% + 連跌≥2次 + 量比≥1.5x）',
     capitalAttention: '目前無資金關注焦點（漲≥2% + 連漲≥3次 + 連量≥300張 + 量比≥2x）',
-    highTurnoverRisk: '目前無換手高危訊號（量比≥3x + 漲幅≥5%）',
+    // ── Tab 1 強勢 ───────────────────────────────────────────────
+    warrantLong:   `目前無權證做多標的（漲+2%~+9.5% + 量比≥1.2x + 月線多頭 + 價>MA20 + 連次≥1 + 連量≥${cvt}張）`,
+    instBuy:       '目前無主投買進特徵（連漲≥2次 + 連量≥200張 + 今漲 + 量比≥1.5x）',
+    instBuyUp:     '目前無主投買沿上特徵（連漲≥5次 + 連量≥200張 + 漲≥1.5% + 量比≥1.3x）',
+    surging:       '目前無飆風向上股（連漲≥3次+有連量+今漲，或 漲≥3%+量比≥2x）',
+    bollingerLong: '目前無布林多味股（突破中軌且靠近上軌 + 布林開口放大 + 今漲）',
+    // ── Tab 2 弱勢 ───────────────────────────────────────────────
+    warrantShort:  `目前無權證做空標的（跌-2%~-9.5% + 量比≥1.2x + 月線空頭 + 價<MA20 + 連次≤-1 + 連量≥${cvt}張）`,
+    instSell:      '目前無主投賣出特徵（連跌≥2次 + 連量≤-200張 + 今跌 + 量比≥1.5x）',
+    bollingerWeak: '目前無弱勢沿下軌股（貼近布林下軌 + 月線下彎 + 量能增加 + 今跌）',
+    // ── Tab 3 週轉率 ─────────────────────────────────────────────
+    highTurnoverRisk: '目前無換手高危訊號（週轉率≥15% + 量比≥2x + 今漲≥5% + 昨漲≥3%）',
+    capitalFocus:  '目前無資金關注焦點（量比>1.5x + 週轉率>5% + 今漲）',
   }
   return msgs[store.activeTab] || '目前無符合條件的股票，可降低門檻或等待訊號'
 })
+
+// ── Fugle API Key 設定 ────────────────────────────────────────
+const showFugleSettings = ref(false)
+const fugleKeyInput     = ref(getFugleApiKey())
+const fugleKeySet       = ref(hasFugleApiKey())
+
+function saveFugleKey() {
+  setFugleApiKey(fugleKeyInput.value)
+  fugleKeySet.value = hasFugleApiKey()
+  showFugleSettings.value = false
+}
+
+function resetAndReload() {
+  localStorage.removeItem('scanner_quotes_v2')
+  location.reload()
+}
 
 // ── 排序底部面板 ──────────────────────────────────────────────
 const showSortSheet = ref(false)
