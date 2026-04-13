@@ -586,7 +586,9 @@ export const useScannerStore = defineStore('scanner', () => {
       history.lastVol = totalVol
     } else if (history.prices.length === 0 && price > 0) {
       // 尚未成交，先記錄一筆開盤前參考價（不計方向）
+      // 同步推入 dirs=0，確保 dirs.length === prices.length，讓後續 bid/ask 路徑正常觸發
       history.prices.push(price)
+      history.dirs.push(0)
     }
 
     const base           = quotes.value[id]

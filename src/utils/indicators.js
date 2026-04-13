@@ -131,12 +131,19 @@ export function calcConsecutiveVolume(prices, volumes, timestamps = null, dirs =
   // prices 可能比 volumes 多一筆（開盤前還沒成交時的參考價）
   const offset = prices.length - volumes.length  // 0 或 1
 
+  // dirs 與 prices 等長（含開盤前參考價佔位 dir=0），取最後 volumes.length 筆對齊成交量
+  // 若 dirs 與 volumes 已等長（無參考價佔位）也能正確處理
+  const tickDirs = (dirs && dirs.length >= volumes.length)
+    ? dirs.slice(-volumes.length)
+    : null
+  const hasDirs = tickDirs !== null && tickDirs.length === volumes.length
+
   // ── 找當前連次方向 ─────────────────────────────────────────────
   let direction = 0
-  if (dirs && dirs.length === volumes.length) {
+  if (hasDirs) {
     // 有實際外/內盤方向：從末端找最後一次非中性
-    for (let i = dirs.length - 1; i >= 0; i--) {
-      if (dirs[i] !== 0) { direction = dirs[i]; break }
+    for (let i = tickDirs.length - 1; i >= 0; i--) {
+      if (tickDirs[i] !== 0) { direction = tickDirs[i]; break }
     }
   }
   if (direction === 0) {
@@ -149,14 +156,14 @@ export function calcConsecutiveVolume(prices, volumes, timestamps = null, dirs =
   if (direction === 0) return 0
 
   // ── 有 dirs：用外/內盤方向累積連量 ────────────────────────────
-  if (dirs && dirs.length === volumes.length) {
+  if (hasDirs) {
     let total = 0
-    for (let i = dirs.length - 1; i >= 0; i--) {
-      if (dirs[i] === 0) {
+    for (let i = tickDirs.length - 1; i >= 0; i--) {
+      if (tickDirs[i] === 0) {
         total += volumes[i]   // 中性成交量仍算入（不中斷連次）
         continue
       }
-      if (dirs[i] === direction) total += volumes[i]
+      if (tickDirs[i] === direction) total += volumes[i]
       else break
     }
     return direction * total
