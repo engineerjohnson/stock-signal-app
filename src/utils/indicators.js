@@ -48,21 +48,50 @@ export function calcMA20Slope(closes) {
 // ── 連次 ──────────────────────────────────────────────────────────
 
 /**
- * 計算連次（連續攻擊次數）
+ * 計算連次（連外次 / 連內次）
  *
- * 從最新一筆成交往回數，連續同方向的價格變動次數。
- * 正數 = 連漲次數，負數 = 連跌次數。平盤略過，不中斷連次。
+ * 正確定義（當沖飆股神手）：
+ *   連外次：成交價 >= 賣一（ask）→ 外盤，買方主動攻擊，+1
+ *   連內次：成交價 <= 買一（bid）→ 內盤，賣方主動攻擊，-1
+ *   中性（成交價在 bid~ask 之間）：不計次、不中斷連次
  *
- * ⚠️ 注意：TWSE MIS 與 Fugle API 目前均不提供逐筆主動買/賣方向，
- * 此處以「價格方向」近似（外盤≈漲、內盤≈跌）。
+ * 有 dirs 時（TWSE MIS bid/ask 比較）使用正確邏輯；
+ * 無 dirs 時 fallback 到「價格方向」近似（Fugle 盤後、日K模式）。
  *
- * @param {number[]} prices 由舊到新的成交價陣列
- * @returns {number}
+ * @param {number[]} prices  由舊到新的成交價陣列
+ * @param {number[]} [dirs]  每筆的方向：1=外盤, -1=內盤, 0=中性（與 prices 等長）
+ * @returns {number} 正 = 連外次, 負 = 連內次
  */
-export function calcConsecutiveTicks(prices) {
+export function calcConsecutiveTicks(prices, dirs = null) {
   if (prices.length < 2) return 0
 
-  // 從末端找最後一次有方向的變動，確定方向
+  if (dirs && dirs.length === prices.length) {
+    return _calcTicksWithDirs(dirs)
+  }
+  return _calcTicksByPrice(prices)
+}
+
+/** 用實際外/內盤方向計算連次 */
+function _calcTicksWithDirs(dirs) {
+  // 從末端找最後一次非中性方向
+  let direction = 0
+  for (let i = dirs.length - 1; i >= 0; i--) {
+    if (dirs[i] !== 0) { direction = dirs[i]; break }
+  }
+  if (direction === 0) return 0
+
+  // 往前累計連續同方向（中性略過，反向中斷）
+  let count = 0
+  for (let i = dirs.length - 1; i >= 0; i--) {
+    if (dirs[i] === 0) continue          // 中性：略過不中斷
+    if (dirs[i] === direction) count++
+    else break
+  }
+  return direction * count
+}
+
+/** 價格方向 fallback（無 bid/ask 資料時） */
+function _calcTicksByPrice(prices) {
   let direction = 0
   for (let i = prices.length - 1; i > 0; i--) {
     if (prices[i] > prices[i - 1]) { direction = 1;  break }
@@ -70,7 +99,6 @@ export function calcConsecutiveTicks(prices) {
   }
   if (direction === 0) return 0
 
-  // 從後往前數連續同方向次數（遇到反方向即停，平盤略過）
   let count = 0
   for (let i = prices.length - 1; i > 0; i--) {
     const diff = prices[i] - prices[i - 1]
@@ -78,41 +106,66 @@ export function calcConsecutiveTicks(prices) {
     if (Math.sign(diff) === direction) count++
     else break
   }
-
   return direction * count
 }
 
 // ── 連量 ──────────────────────────────────────────────────────────
 
 /**
- * 計算連量
+ * 計算連量（連外量 / 連內量）
  *
- * 有時間戳記（Fugle 逐筆）→ 取最近 30 秒同方向成交量總和
- * 無時間戳記（TWSE MIS）  → 取當前連次期間的累積成交量（fallback）
+ * 正確定義：當前連次方向上的「累積成交量」。
+ *   有 dirs：依外/內盤方向累積（最準確）
+ *   有 timestamps：取最近 30 秒同方向成交量（Fugle 逐筆）
+ *   否則：連次期間累積量 fallback（TWSE MIS）
  *
- * @param {number[]} prices    由舊到新的成交價
- * @param {number[]} volumes   每筆成交量 delta（張），prices 可能多一筆開盤前參考價
- * @param {number[]} [timestamps] 每筆成交的 ms 時間戳記（與 volumes 對應，可選）
- * @returns {number} 正 = 連漲累積張數，負 = 連跌累積張數，0 = 無方向
+ * @param {number[]} prices      由舊到新的成交價
+ * @param {number[]} volumes     每筆成交量 delta（張），prices 可能多一筆開盤前參考價
+ * @param {number[]} [timestamps] 每筆成交的 ms 時間戳（與 volumes 等長，可選）
+ * @param {number[]} [dirs]       每筆方向：1=外盤, -1=內盤, 0=中性（與 volumes 等長，可選）
+ * @returns {number} 正 = 連外量, 負 = 連內量
  */
-export function calcConsecutiveVolume(prices, volumes, timestamps = null) {
+export function calcConsecutiveVolume(prices, volumes, timestamps = null, dirs = null) {
   if (prices.length < 2 || volumes.length === 0) return 0
 
   // prices 可能比 volumes 多一筆（開盤前還沒成交時的參考價）
   const offset = prices.length - volumes.length  // 0 或 1
 
-  // 找當前方向
+  // ── 找當前連次方向 ─────────────────────────────────────────────
   let direction = 0
-  for (let i = prices.length - 1; i > 0; i--) {
-    if (prices[i] > prices[i - 1]) { direction = 1;  break }
-    if (prices[i] < prices[i - 1]) { direction = -1; break }
+  if (dirs && dirs.length === volumes.length) {
+    // 有實際外/內盤方向：從末端找最後一次非中性
+    for (let i = dirs.length - 1; i >= 0; i--) {
+      if (dirs[i] !== 0) { direction = dirs[i]; break }
+    }
+  }
+  if (direction === 0) {
+    // fallback：價格方向
+    for (let i = prices.length - 1; i > 0; i--) {
+      if (prices[i] > prices[i - 1]) { direction = 1;  break }
+      if (prices[i] < prices[i - 1]) { direction = -1; break }
+    }
   }
   if (direction === 0) return 0
 
-  // ── 30 秒滾動視窗（Fugle 逐筆有時間戳記時使用）────────────────
+  // ── 有 dirs：用外/內盤方向累積連量 ────────────────────────────
+  if (dirs && dirs.length === volumes.length) {
+    let total = 0
+    for (let i = dirs.length - 1; i >= 0; i--) {
+      if (dirs[i] === 0) {
+        total += volumes[i]   // 中性成交量仍算入（不中斷連次）
+        continue
+      }
+      if (dirs[i] === direction) total += volumes[i]
+      else break
+    }
+    return direction * total
+  }
+
+  // ── 有 timestamps：30 秒滾動視窗（Fugle 逐筆）────────────────
   if (timestamps && timestamps.length > 0) {
     const now    = timestamps[timestamps.length - 1]
-    const cutoff = now - 30_000  // 30 秒前
+    const cutoff = now - 30_000
     let total = 0
 
     for (let i = prices.length - 1; i > 0; i--) {
@@ -120,10 +173,9 @@ export function calcConsecutiveVolume(prices, volumes, timestamps = null) {
       if (volIdx < 0 || volIdx >= volumes.length) continue
 
       const ts = timestamps[volIdx] ?? 0
-      if (ts < cutoff) break  // 超過 30 秒視窗，不再往前累加
+      if (ts < cutoff) break
 
       const diff    = prices[i] - prices[i - 1]
-      // 平盤沿用當前連次方向；反向不計入
       const thisDir = diff > 0 ? 1 : diff < 0 ? -1 : direction
       if (thisDir === direction) total += volumes[volIdx]
     }
@@ -131,7 +183,7 @@ export function calcConsecutiveVolume(prices, volumes, timestamps = null) {
     return direction * total
   }
 
-  // ── 連次期間累積量（TWSE MIS fallback，無時間戳記）──────────────
+  // ── 連次期間累積量 fallback ────────────────────────────────────
   let totalVol = 0
   for (let i = prices.length - 1; i > 0; i--) {
     const diff   = prices[i] - prices[i - 1]
@@ -141,9 +193,7 @@ export function calcConsecutiveVolume(prices, volumes, timestamps = null) {
       if (volIdx >= 0 && volIdx < volumes.length) totalVol += volumes[volIdx]
       continue
     }
-
     if (Math.sign(diff) !== direction) break
-
     if (volIdx >= 0 && volIdx < volumes.length) totalVol += volumes[volIdx]
   }
 

@@ -194,7 +194,7 @@ export const useScannerStore = defineStore('scanner', () => {
       const newQuotes = {}
       for (const s of stocks) {
         newQuotes[s.id] = buildInitialQuote(s)
-        tickHistories[s.id] = { prices: [], volumes: [], timestamps: [], lastVol: 0, lastDelta: 0 }
+        tickHistories[s.id] = { prices: [], volumes: [], timestamps: [], dirs: [], lastVol: 0, lastDelta: 0 }
       }
 
       // 不論盤中或盤後，都嘗試讀取 localStorage 快照
@@ -352,21 +352,25 @@ export const useScannerStore = defineStore('scanner', () => {
 
   /**
    * Fugle 路徑：每支股票先試逐筆成交，失敗再試 1分K。
-   * 不做整批偵測，避免 probe timeout 造成長時間卡頓。
-   * 序列請求，每3支暫停3秒（≈60 req/min 免費方案）。
+   * 序列請求，每支固定間隔 2 秒（≈ 30 req/min，安全低於免費方案 60/min 上限）。
+   *
+   * ⚠️ 原「每3次暫停3秒 = 60/min」的問題：
+   *   失敗時 trades + candles 各算一次 → 最差 2 req/stock × burst 3 = 6 req/3s = 120/min，超限。
+   *   改為「每支暫停 2s」後：最差 2 req/stock，但有 2s 間隔保護，實際 ≤ 60/min。
+   *
    * fugleProgress 即時回報載入進度，供 UI 顯示。
    */
   async function _loadFugleCandles(ids) {
     const delay = ms => new Promise(r => setTimeout(r, ms))
     let loaded = 0
-    let allFailed = true   // 若全部失敗則改用 TWSE 日K
+    let allFailed = true
     fugleProgress.value = `0 / ${ids.length}`
 
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i]
       if (!quotes.value[id]) { fugleProgress.value = `${i + 1} / ${ids.length}`; continue }
 
-      // 先試逐筆，失敗再試 1分K（兩者都有 timeout，不會無限等待）
+      // 先試逐筆，失敗再試 1分K
       let data = await fetchIntradayTrades(id)
       if (!data || data.prices.length < 2) data = await fetchIntradayCandles(id)
 
@@ -375,7 +379,6 @@ export const useScannerStore = defineStore('scanner', () => {
         quotes.value[id] = {
           ...quotes.value[id],
           consecutiveTicks:  calcConsecutiveTicks(data.prices),
-          // 傳入 timestamps（逐筆有時）→ 30 秒滾動視窗；candle fallback → null → 連次期間累積
           consecutiveVolume: calcConsecutiveVolume(data.prices, data.volumes, data.timestamps ?? null),
         }
         loaded++
@@ -383,8 +386,8 @@ export const useScannerStore = defineStore('scanner', () => {
 
       fugleProgress.value = `${i + 1} / ${ids.length}`
 
-      // 每 3 次請求暫停 3 秒（速率限制）
-      if ((i + 1) % 3 === 0 && i < ids.length - 1) await delay(3000)
+      // 每支固定等 2 秒（≤ 30 req/min，含 trades+candles 雙重請求也安全）
+      if (i < ids.length - 1) await delay(2000)
     }
 
     fugleProgress.value = 'done'
@@ -424,18 +427,18 @@ export const useScannerStore = defineStore('scanner', () => {
   }
 
   /**
-   * TWSE 月K：小批次並行 + 批次間延遲，避免短時間大量請求觸發 TWSE WAF（307 封鎖）。
-   * 每批 5 支並行，批次間暫停 600ms → 約 12~15 批完成 ~100 支，總耗時 ~8 秒。
+   * TWSE 月K：序列請求 + 固定間隔，避免觸發 TWSE / Cloudflare Worker 的速率限制（429）。
+   * 每支間隔 500ms → ~120 支約 60 秒完成，每分鐘 ≤ 120 req，安全範圍內。
    * 設定 _dailyMode=true，UI 顯示「📊 日K連次」。
    * 若有 Fugle Key，此函式跑完後 _loadFugleCandles 會覆蓋量前100的值。
    */
   async function _loadTwseDailyHistory(ids) {
-    const BATCH = 5                                    // 從 20 降到 5，降低同時連線數
-    const DELAY = 600                                  // 批次間 600ms
+    const BATCH = 2                                    // 每次 2 支並行（小並發）
+    const DELAY = 1000                                 // 每批間隔 1 秒 → ≤ 120 req/min
     const delay = ms => new Promise(r => setTimeout(r, ms))
 
     for (let i = 0; i < ids.length; i += BATCH) {
-      if (i > 0) await delay(DELAY)                   // 第一批不等，後續批次間休息
+      if (i > 0) await delay(DELAY)
       const batch = ids.slice(i, i + BATCH)
       const results = await Promise.allSettled(batch.map(id => fetchDailyHistory(id)))
 
@@ -552,6 +555,16 @@ export const useScannerStore = defineStore('scanner', () => {
     const totalVol = parseInt(raw.v) || 0
     const history  = tickHistories[id]
 
+    // ── 外盤 / 內盤判斷（TWSE MIS raw.b = 買一, raw.g = 賣一）────
+    // 正確定義：成交價 >= 賣一 → 外盤（+1），成交價 <= 買一 → 內盤（-1）
+    // 欄位格式：'100.5_100_99.5_99_98.5'（五檔，底線分隔，取第一個）
+    const bid1 = parseFloat(raw.b?.split('_')[0]) || 0
+    const ask1 = parseFloat(raw.g?.split('_')[0]) || 0
+    let tickDir = 0
+    if (ask1 > 0 && price >= ask1)      tickDir =  1   // 外盤：主動買攻
+    else if (bid1 > 0 && price <= bid1) tickDir = -1   // 內盤：主動賣攻
+    // 成交價在 bid~ask 之間 → 中性（0），不計次、不中斷連次
+
     // 只在有新成交（累積量增加）時更新 tick 歷史
     const isNewTick = totalVol > history.lastVol
     if (isNewTick) {
@@ -561,16 +574,18 @@ export const useScannerStore = defineStore('scanner', () => {
       if (history.prices.length >= 500) {
         history.prices.shift()
         history.volumes.shift()
-        if (history.timestamps.length) history.timestamps.shift()
+        history.timestamps.shift()
+        history.dirs.shift()
       }
       history.prices.push(price)
       history.volumes.push(delta)
-      history.timestamps.push(Date.now())  // TWSE MIS 無逐筆時間，用接收時刻近似
+      history.timestamps.push(Date.now())
+      history.dirs.push(tickDir)
       history.lastDelta = delta
 
       history.lastVol = totalVol
     } else if (history.prices.length === 0 && price > 0) {
-      // 尚未成交，先記錄一筆開盤前參考價
+      // 尚未成交，先記錄一筆開盤前參考價（不計方向）
       history.prices.push(price)
     }
 
@@ -594,13 +609,16 @@ export const useScannerStore = defineStore('scanner', () => {
 
     // 只有在本次頁面生命週期裡累積了 >1 筆 tick 才重算；
     // 否則保留從 localStorage 恢復的值（收盤重開頁面後的主要場景）
+    // dirs 有資料時：用外/內盤方向計算（最準確）
+    // dirs 無資料時：fallback 到價格方向
+    const hasDirs = history.dirs.length > 0
     const consecutiveTicks = history.prices.length > 1
-      ? calcConsecutiveTicks(history.prices)
+      ? calcConsecutiveTicks(history.prices, hasDirs ? history.dirs : null)
       : (base.consecutiveTicks ?? 0)
 
-    // 連量：傳入 timestamps → 30 秒滾動視窗（TWSE MIS 以接收時刻近似）
+    // 連量：優先 dirs（外/內盤累積量）→ timestamps（30s視窗）→ 連次期間累積
     const consecutiveVolume = history.prices.length > 1 && history.volumes.length > 0
-      ? calcConsecutiveVolume(history.prices, history.volumes, history.timestamps)
+      ? calcConsecutiveVolume(history.prices, history.volumes, history.timestamps, hasDirs ? history.dirs : null)
       : (base.consecutiveVolume ?? 0)
 
     // lastDeltaVol：有新成交就用新值，否則保留舊值
@@ -654,7 +672,7 @@ export const useScannerStore = defineStore('scanner', () => {
 
     quotes.value[stockId] = buildInitialQuote(base)
     pool.value = [...pool.value, base]
-    tickHistories[stockId] = { prices: [], volumes: [], timestamps: [], lastVol: 0, lastDelta: 0 }
+    tickHistories[stockId] = { prices: [], volumes: [], timestamps: [], dirs: [], lastVol: 0, lastDelta: 0 }
 
     // 自選股一律加入掃描 ID 清單，確保盤中能取得即時 MIS 資料
     if (!_scanIds.includes(stockId)) _scanIds.push(stockId)
