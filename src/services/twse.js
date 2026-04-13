@@ -255,42 +255,50 @@ export function lookupStockBase(stockId) {
  * @returns {Promise<{ id: string, days: { close, volume, change }[] }>}
  */
 export async function fetchDailyHistory(stockId) {
-  // 優先用 www.twse.com.tw 帶日期參數取本月日K（資料較即時）
-  // 格式：www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?stockNo=2330&date=YYYYMMDD
+  // STOCK_DAY 帶 date=今日 在盤中會得到 307（今日盤後資料尚未釋出）。
+  // DEV：Vite proxy 碰到 307 → 被 WAF 封鎖頁面，直接跳過 www 走 openapi。
+  // PROD：Cloudflare Worker 同樣會拿到 307 並透傳；先試 www，失敗再 fallback openapi。
   const todayParam = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const wwwPath = `/rwd/zh/afterTrading/STOCK_DAY?stockNo=${stockId}&date=${todayParam}&response=json`
-  try {
-    const rawResp = await (import.meta.env.DEV
-      ? axios.get(`${TWSE_WWW}${wwwPath}`, { timeout: 10000 }).then(r => r?.data ?? r)
-      : proxyGet(`${_TWSE}${wwwPath}`))
+  const wwwPath    = `/rwd/zh/afterTrading/STOCK_DAY?stockNo=${stockId}&date=${todayParam}&response=json`
 
-    let rows = []
-    if (rawResp?.stat === 'OK' && Array.isArray(rawResp.data)) {
-      const fields = rawResp.fields || []
-      const idx = name => fields.indexOf(name)
-      const iClose = idx('收盤價'), iVol = idx('成交股數'), iChg = idx('漲跌價差')
-      rows = rawResp.data
+  // ── 嘗試 www（僅 PROD）───────────────────────────────────────
+  let wwwResp = null
+  if (!import.meta.env.DEV) {
+    try {
+      wwwResp = await proxyGet(`${_TWSE}${wwwPath}`)
+    } catch { /* 失敗直接 fallback */ }
+  }
+
+  // ── 解析 www 結果 ─────────────────────────────────────────────
+  if (wwwResp?.stat === 'OK' && Array.isArray(wwwResp.data)) {
+    try {
+      const fields  = wwwResp.fields || []
+      const idx     = name => fields.indexOf(name)
+      const iClose  = idx('收盤價'), iVol = idx('成交股數'), iChg = idx('漲跌價差')
+      const rows = wwwResp.data
         .filter(r => r[iClose] && r[iClose] !== '--' && parseNum(r[iClose]) > 0)
         .map(r => ({
           close:  parseNum(r[iClose]),
           volume: Math.round(parseNum(r[iVol]) / 1000),  // 股→張
           change: parseNum(r[iChg]),
         }))
-    } else {
-      // fallback 到 openapi
-      const path = `/exchangeReport/STOCK_DAY?stockNo=${stockId}`
-      const raw = await (import.meta.env.DEV
-        ? axios.get(`${OPENAPI}${path}`, { timeout: 10000 }).then(r => r?.data ?? r)
-        : proxyGet(`${_OPENAPI}${path}`))
-      rows = (Array.isArray(raw) ? raw : [])
-        .filter(r => r.ClosingPrice && r.ClosingPrice !== '--' && parseNum(r.ClosingPrice) > 0)
-        .map(r => ({
-          close:  parseNum(r.ClosingPrice),
-          volume: parseNum(r.TradeVolume),
-          change: parseNum(r.Change),
-        }))
-    }
+      return { id: stockId, days: rows }
+    } catch { /* 解析失敗繼續 fallback */ }
+  }
 
+  // ── Fallback：openapi（DEV 直接走這裡；PROD www 307/失敗也走這裡）─
+  try {
+    const path = `/exchangeReport/STOCK_DAY?stockNo=${stockId}`
+    const raw  = await (import.meta.env.DEV
+      ? axios.get(`${OPENAPI}${path}`, { timeout: 10000 }).then(r => r?.data ?? r)
+      : proxyGet(`${_OPENAPI}${path}`))
+    const rows = (Array.isArray(raw) ? raw : [])
+      .filter(r => r.ClosingPrice && r.ClosingPrice !== '--' && parseNum(r.ClosingPrice) > 0)
+      .map(r => ({
+        close:  parseNum(r.ClosingPrice),
+        volume: parseNum(r.TradeVolume),
+        change: parseNum(r.Change),
+      }))
     return { id: stockId, days: rows }
   } catch {
     return { id: stockId, days: [] }
