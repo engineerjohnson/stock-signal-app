@@ -424,13 +424,18 @@ export const useScannerStore = defineStore('scanner', () => {
   }
 
   /**
-   * TWSE 月K：批次並行（每批20支），覆蓋全部 pool 股票。
+   * TWSE 月K：小批次並行 + 批次間延遲，避免短時間大量請求觸發 TWSE WAF（307 封鎖）。
+   * 每批 5 支並行，批次間暫停 600ms → 約 12~15 批完成 ~100 支，總耗時 ~8 秒。
    * 設定 _dailyMode=true，UI 顯示「📊 日K連次」。
    * 若有 Fugle Key，此函式跑完後 _loadFugleCandles 會覆蓋量前100的值。
    */
   async function _loadTwseDailyHistory(ids) {
-    const BATCH = 20
+    const BATCH = 5                                    // 從 20 降到 5，降低同時連線數
+    const DELAY = 600                                  // 批次間 600ms
+    const delay = ms => new Promise(r => setTimeout(r, ms))
+
     for (let i = 0; i < ids.length; i += BATCH) {
+      if (i > 0) await delay(DELAY)                   // 第一批不等，後續批次間休息
       const batch = ids.slice(i, i + BATCH)
       const results = await Promise.allSettled(batch.map(id => fetchDailyHistory(id)))
 
