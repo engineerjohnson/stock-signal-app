@@ -355,6 +355,11 @@ const tabs = [
   // ── Tab 3 週轉率 ─────────────────────────────────────────────
   { value: 'highTurnoverRisk', label: '換手高危 🚨',    desc: '換手高危' },
   { value: 'capitalFocus',     label: '資金焦點 🟠',    desc: '資金關注焦點' },
+  // ── 年量排序衍生 ────────────────────────────────────────────
+  { value: 'launchVolume',     label: '發動量 🚀💥',    desc: '發動量' },
+  { value: 'reversalVolume',   label: '轉折量 🔄',      desc: '轉折量' },
+  { value: 'buyShortcut',      label: '買盤捷徑 🟥',    desc: '買盤捷徑' },
+  { value: 'sellShortcut',     label: '賣盤捷徑 🟩',    desc: '賣盤捷徑' },
   // ── 其他輔助 ────────────────────────────────────────────────
   { value: 'strong',           label: '強勢 🔴',        desc: '強勢' },
   { value: 'weak',             label: '弱勢 🟢',        desc: '弱勢' },
@@ -440,6 +445,8 @@ const emptyIcon = computed(() => {
     warrantShort: '🎯', instSell: '💼', bollingerWeak: '📊',
     // Tab 3 週轉率
     highTurnoverRisk: '🚨', capitalFocus: '🟠',
+    // 年量排序衍生
+    launchVolume: '💥', reversalVolume: '🔄', buyShortcut: '🟥', sellShortcut: '🟩',
     // 其他
     strong: '🔴', weak: '🟢', longCandidate: '📈', shortCandidate: '📉',
     capitalAttention: '🔍', volumeUp: '🔼', volumeDown: '🔽', highTurnover: '⚡',
@@ -477,6 +484,11 @@ const emptyMsg = computed(() => {
     // ── Tab 3 週轉率 ─────────────────────────────────────────────
     highTurnoverRisk: '目前無換手高危訊號（週轉率≥15% + 量比≥2x + 今漲≥5% + 昨漲≥3%）',
     capitalFocus:  '目前無資金關注焦點（量比>1.5x + 週轉率>5% + 今漲）',
+    // ── 年量排序衍生 ─────────────────────────────────────────────
+    launchVolume:  '目前無發動量訊號（|連次|=1 + 單筆≥100張 + 量比≥1.5x）─ 建議搭配年量排序使用',
+    reversalVolume:`目前無轉折量訊號（|連次|≥20 + 連量≥${cvt}張）─ 連20次以上大量準備轉折`,
+    buyShortcut:   `目前無買盤捷徑訊號（外盤連次≥10 + 連量≥${cvt}張）─ 外盤買超累積，注意高點`,
+    sellShortcut:  `目前無賣盤捷徑訊號（內盤連次≤-10 + 連量≥${cvt}張）─ 內盤賣超累積，注意反彈`,
   }
   return msgs[store.activeTab] || '目前無符合條件的股票，可降低門檻或等待訊號'
 })
@@ -501,6 +513,7 @@ function resetAndReload() {
 const showSortSheet = ref(false)
 
 const sortOptions = [
+  { field: 'lastDeltaVol',      asc: false, label: '年量（單筆量）' },
   { field: 'consecutiveVolume', asc: false, label: '連量' },
   { field: 'consecutiveVolume', asc: true,  label: '連量' },
   { field: 'consecutiveTicks',  asc: false, label: '連次' },
@@ -514,6 +527,7 @@ const sortOptions = [
 ]
 
 const SORT_LABELS = {
+  lastDeltaVol:      '年量',
   consecutiveVolume: '連量', consecutiveTicks: '連次',
   changePercent: '漲跌幅', volumeVsYesterday: '昨量比', volume: '成交量',
 }

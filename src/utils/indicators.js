@@ -494,3 +494,74 @@ export function isHighTurnoverRisk(stock) {
     stock.changePercent >= 5 &&
     (stock.yesterdayChangePercent ?? 0) >= 3
 }
+
+// ── 年量排序衍生指標 ──────────────────────────────────────────────
+
+/**
+ * 發動量：連次首次出現（|連次|=1）+ 單筆大量 + 量比高
+ *
+ * 邏輯：年量排序中排在最頂端的第一筆大量訊號，
+ * 代表主力剛剛「發動」，是最佳進場時機。
+ *
+ * 條件：
+ *   |連次| = 1（方向剛翻）
+ *   lastDeltaVol >= 100 張（單筆成交量大）
+ *   volumeVsYesterday >= 1.5x（今日已有量能支撐）
+ */
+export function isLaunchVolume(stock) {
+  return Math.abs(stock.consecutiveTicks) === 1 &&
+    (stock.lastDeltaVol ?? 0) >= 100 &&
+    stock.volumeVsYesterday >= 1.5
+}
+
+/**
+ * 轉折量：連次 >= 20 且連量達門檻
+ *
+ * 邏輯：年量排序中連續出現 20 次以上 + 仍在大量，
+ * 代表行情已走了一段，準備轉折，適合反向操作。
+ *
+ * 條件：
+ *   |連次| >= 20（連外/內盤超過 20 個 tick ≈ 100秒）
+ *   連量達市場前30%門檻（量大才算數）
+ *
+ * 盤後 _dailyMode 略過連量條件。
+ *
+ * @param {object} stock
+ * @param {number} [connVolThreshold=0]  連量前30%門檻（由 store 傳入）
+ */
+export function isReversalVolume(stock, connVolThreshold = 0) {
+  return Math.abs(stock.consecutiveTicks) >= 20 &&
+    (stock._dailyMode || connVolThreshold <= 0 || Math.abs(stock.consecutiveVolume) >= connVolThreshold)
+}
+
+/**
+ * 買盤捷徑：外盤連次 >= 10 且連量達門檻
+ *
+ * 邏輯：外盤（主動買）已連續攻擊 10 個 tick（≈50秒）且量大，
+ * 此時買盤能量趨於耗盡，容易出現短線高點（做多者可考慮回補或出場）。
+ *
+ * 盤後 _dailyMode 略過連量條件。
+ *
+ * @param {object} stock
+ * @param {number} [connVolThreshold=0]
+ */
+export function isBuyShortcut(stock, connVolThreshold = 0) {
+  return stock.consecutiveTicks >= 10 &&
+    (stock._dailyMode || connVolThreshold <= 0 || stock.consecutiveVolume >= connVolThreshold)
+}
+
+/**
+ * 賣盤捷徑：內盤連次 <= -10 且連量達門檻
+ *
+ * 邏輯：內盤（主動賣）已連續攻擊 10 個 tick（≈50秒）且量大，
+ * 此時賣盤能量趨於耗盡，容易出現短線低點（做空者可考慮回補）。
+ *
+ * 盤後 _dailyMode 略過連量條件。
+ *
+ * @param {object} stock
+ * @param {number} [connVolThreshold=0]
+ */
+export function isSellShortcut(stock, connVolThreshold = 0) {
+  return stock.consecutiveTicks <= -10 &&
+    (stock._dailyMode || connVolThreshold <= 0 || Math.abs(stock.consecutiveVolume) >= connVolThreshold)
+}

@@ -14,6 +14,8 @@ import {
   isInstBuy, isInstBuyUp, isInstSell,
   isSurging, isBollingerLong, isBollingerWeak,
   isCapitalAttention, isHighTurnoverRisk,
+  isLaunchVolume, isReversalVolume,
+  isBuyShortcut, isSellShortcut,
 } from '@/utils/indicators.js'
 import { isMarketOpen, getVolumeTimeFactor } from '@/composables/useMarketHours.js'
 
@@ -51,7 +53,7 @@ export const useScannerStore = defineStore('scanner', () => {
   const fugleProgress   = ref(null)    // null=未開始, '0/100'=載入中, 'done'=完成
 
   // 排序狀態
-  // field: 'consecutiveVolume' | 'consecutiveTicks' | 'changePercent' | 'turnoverRate' | 'volumeVsYesterday' | 'volume'
+  // field: 'consecutiveVolume' | 'consecutiveTicks' | 'changePercent' | 'turnoverRate' | 'volumeVsYesterday' | 'volume' | 'lastDeltaVol'
   const sortField     = ref('consecutiveVolume')
   const sortAsc       = ref(false)   // false = 高→低（預設降序）
 
@@ -134,6 +136,11 @@ export const useScannerStore = defineStore('scanner', () => {
       case 'highTurnoverRisk': filtered = all.filter(s => isHighTurnoverRisk(s));          break
       case 'capitalFocus':     filtered = all.filter(s => isCapitalFocus(s));              break
       case 'capitalAttention': filtered = all.filter(s => isCapitalAttention(s));          break
+      // ── 年量排序衍生 ──────────────────────────────────────────────
+      case 'launchVolume':     filtered = all.filter(s => isLaunchVolume(s));              break
+      case 'reversalVolume':   filtered = all.filter(s => isReversalVolume(s, cvt));       break
+      case 'buyShortcut':      filtered = all.filter(s => isBuyShortcut(s, cvt));          break
+      case 'sellShortcut':     filtered = all.filter(s => isSellShortcut(s, cvt));         break
       default:             filtered = all  // 'all'：不篩選
     }
 
